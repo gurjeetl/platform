@@ -1,0 +1,39 @@
+# ── Secrets — NEVER commit these ─────────────────────────────────────────────
+.env
+**/.env
+*.env
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+dist/
+*.egg-info/
+.eggs/
+*.pyi_typestubs
+
+# ── MLflow / tracking artifacts ───────────────────────────────────────────────
+# These are generated at runtime — every developer has their own local copy.
+mlruns/
+mlartifacts/
+mlruns.db
+mlflow.db
+mlflow*.db
+
+# ── Tool caches ───────────────────────────────────────────────────────────────
+.pytest_cache/
+.import_linter_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

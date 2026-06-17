@@ -1,0 +1,22 @@
+app_name: genie-platform
+# Dev profile that hits a real model (gpt-4o-mini) and runs the content guards,
+# so the trace shows input_guard/output_guard and the LLM is actually called.
+# OPENAI_API_KEY is read from the environment (see launch command).
+llm_provider: openai
+log_level: INFO
+debug: true
+
+enable_rag: false
+enable_tracking: false
+enable_hitl: false
+enable_guards: true
+
+agent_mode: local
+memory_backend: in_memory
+
+llm_services:
+  models:
+    openai:
+      url: "https://api.openai.com/v1"
+      model_name: "gpt-4o-mini"
+      max_token_limit: 16384

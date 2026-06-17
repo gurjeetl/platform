@@ -1,0 +1,76 @@
+[importlinter]
+root_packages =
+    genie
+    applications
+include_external_packages = True
+
+# ── Layered boundaries ────────────────────────────────────────────────────────
+# API routers must not reach past the application layer into infrastructure.
+[importlinter:contract:routers-must-not-bypass-application]
+name = API routers must not bypass the application layer
+type = forbidden
+source_modules =
+    genie.interface.routers
+forbidden_modules =
+    genie.llm
+    genie.rag.adapters
+    genie.memory.adapters
+
+# The platform must never import extracted-service internals (they are separate
+# deployables reached over HTTP). Mirrors the original RAG-service contract.
+[importlinter:contract:no-rag-service-internals]
+name = Platform must not import RAG service internals
+type = forbidden
+source_modules =
+    genie
+forbidden_modules =
+    rag_service
+
+[importlinter:contract:no-registry-service-internals]
+name = Platform must not import the registry service internals
+type = forbidden
+source_modules =
+    genie
+forbidden_modules =
+    registry_service
+
+[importlinter:contract:no-agent-sdk-internals]
+name = Platform must not import the distributed agent SDK internals
+type = forbidden
+source_modules =
+    genie
+forbidden_modules =
+    genie_agent_sdk
+
+# ── Application-agent boundaries ──────────────────────────────────────────────
+# In-process application agents may only use the platform agent SDK surface
+# (genie.agents.base); they must not reach into platform internals.
+[importlinter:contract:app-agents-sdk-boundary]
+name = Application agents may only use the platform agent SDK surface
+type = forbidden
+source_modules =
+    applications.weather.agent
+    applications.outage.agent
+    applications.rag.agent
+    applications.providers
+forbidden_modules =
+    genie.application
+    genie.interface
+    genie.llm
+    genie.rag
+    genie.mcp
+    genie.security
+    genie.tracking
+    genie.memory
+    genie.discovery
+    genie.a2a
+
+# Pipeline nodes must not import concrete agent implementations (agents plug in
+# via providers, not direct imports).
+[importlinter:contract:no-direct-agent-impl-in-nodes]
+name = Application nodes must not directly import concrete agent implementations
+type = forbidden
+source_modules =
+    genie.application.nodes
+forbidden_modules =
+    applications

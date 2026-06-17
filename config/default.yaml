@@ -1,0 +1,40 @@
+app_name: genie-platform
+#api_key: "pg-oati-abc123XYZ789456XYZ123abc456XYZ789abc123"
+mlflow_tracking_uri: "http://localhost:2001"
+mlflow_experiment_name: genie-platform
+llm_provider: gpt_oss
+rag_mode: local
+log_level: INFO
+debug: false
+
+# ── Feature gates ─────────────────────────────────────────────────────────────
+enable_rag: true
+enable_tracking: true
+enable_hitl: false        # HITL node retained but routed-around by default
+enable_guards: true       # mandatory input/output content guards (BaseAgent parity)
+
+# ── Distributed agents (A2A + registry discovery) ──────────────────────────────
+agent_mode: distributed
+registry_url: "http://127.0.0.1:2005"
+registry_ttl_seconds: 90
+registry_heartbeat_seconds: 30
+agent_refresh_seconds: 30
+
+# ── Multi-store memory ──────────────────────────────────────────────────────────
+# "in_memory" (zero-dep) or "mongo" (durable: messages/facts/conversations + commits).
+memory_backend: in_memory
+mongodb_uri: "mongodb://localhost:27017"
+mongodb_db: agent_memory
+# redis_url: "redis://localhost:6379/0"     # hot blackboard mirror (optional)
+# milvus_uri: "http://localhost:19530"      # remote Milvus (optional); else milvus_db_path
+milvus_db_path: "./milvus_local.db"
+
+# ── LLM backends (OpenAI-compatible HTTP endpoints) ─────────────────────────────
+llm_services:
+  models:
+    gpt_oss:
+      host: "genieapps4.dev.oati.local"
+      port: 8033
+      model_name: "openai/gpt-oss-120b"
+      prompting_path: "v1"
+      max_token_limit: 131072

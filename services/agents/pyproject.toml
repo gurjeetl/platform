@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "genie-example-agents"
+version = "0.1.0"
+description = "Example distributed A2A agents + MCP tool server for the Genie platform"
+requires-python = ">=3.11"
+dependencies = [
+    "genie-agent-sdk",
+    "mcp",
+    "langchain-core",
+]
+
+[tool.uv.sources]
+genie-agent-sdk = { path = "../../packages/genie-agent-sdk", editable = true }
+
+[tool.hatch.build.targets.wheel]
+# Runnable scripts at the package root (no nested package dir).
+include = [
+    "weather_agent.py",
+    "outage_agent.py",
+    "rag_agent.py",
+    "mcp_weather_server.py",
+]

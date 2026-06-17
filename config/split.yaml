@@ -1,0 +1,13 @@
+app_name: genie-platform
+llm_provider: mock
+llm_model: mock-model
+rag_mode: remote
+rag_service_url: "http://localhost:8001"
+rag_timeout_seconds: 30.0
+rag_max_retries: 3
+enable_rag: true
+enable_hitl: true
+enable_tracking: true
+hitl_auto_approve: true
+debug: false
+log_level: INFO

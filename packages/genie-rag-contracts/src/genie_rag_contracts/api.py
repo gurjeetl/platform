@@ -1,0 +1,4 @@
+API_VERSION = "v1"
+CORRELATION_ID_HEADER = "X-Correlation-ID"
+INGEST_BASE_PATH = f"/{API_VERSION}/ingest"
+RETRIEVE_PATH = f"/{API_VERSION}/retrieve"

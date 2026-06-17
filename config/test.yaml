@@ -1,0 +1,18 @@
+app_name: genie-platform-test
+debug: true
+log_level: DEBUG
+
+llm_provider: mock
+llm_model: mock-model
+
+rag_mode: local
+enable_rag: true
+
+enable_hitl: false
+hitl_auto_approve: true
+
+enable_tracking: false
+mlflow_tracking_uri: ./mlruns-test
+mlflow_experiment_name: genie-platform-test
+
+api_key: null
