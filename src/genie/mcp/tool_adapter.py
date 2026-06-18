@@ -1,4 +1,5 @@
 """MCPToolAdapter — bridges MCP tool discovery into ConcreteToolGateway."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -33,6 +34,7 @@ class MCPToolAdapter:
 
     @property
     def connected(self) -> bool:
+        """True while the underlying MCP client holds a live connection."""
         return self._client.connected
 
     async def register(self) -> bool:
@@ -51,6 +53,7 @@ class MCPToolAdapter:
 
         tools = await self._client.list_tools()
         for tool in tools:
+            # Namespace tool ids by service so two servers can expose the same name.
             tool_id = f"{self._service_name}.{tool.name}"
             client = self._client  # capture for closure
             tool_name = tool.name  # capture for closure
@@ -80,10 +83,12 @@ class MCPToolAdapter:
     async def unregister(self) -> None:
         """Disconnect and clear registered tools from the gateway."""
         await self._client.disconnect()
+        # No public deregister on the gateway, so pop directly from its registry.
         for tool_id in self._registered_tools:
             self._gateway._tools.pop(tool_id, None)
         self._registered_tools.clear()
 
     @property
     def registered_tools(self) -> list[str]:
+        """Namespaced ids of the tools this adapter has registered."""
         return list(self._registered_tools)

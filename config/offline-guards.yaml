@@ -1,0 +1,22 @@
+app_name: genie-platform
+# Offline profile WITH content guards enabled, so the trace shows
+# input_guard / output_guard bracketing the pipeline.
+# Requires the guards extra: `uv sync --extra guards`.
+# Still offline otherwise: built-in MockLLMProvider, in-process agents, no MLflow.
+llm_provider: mock
+log_level: INFO
+debug: true
+
+enable_rag: true
+enable_tracking: false
+enable_hitl: false
+enable_guards: true         # adds input_guard + output_guard nodes
+enable_router: true
+
+agent_mode: local
+memory_backend: in_memory
+rag_mode: local
+
+# Guard tuning (PII redaction on; fail-closed so blocks are visible).
+guard_pii: true
+guard_fail_open: false

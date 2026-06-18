@@ -1,4 +1,5 @@
 """AgentRegistry — registration, discovery, enable/disable, and live health tracking."""
+
 from __future__ import annotations
 
 import asyncio
@@ -25,6 +26,7 @@ class AgentRegistry:
     """
 
     def __init__(self) -> None:
+        """Start empty; the health cache is populated as agents register."""
         self._agents: dict[str, BaseAgent] = {}
         # Separate health cache — owned by the registry, not by agents.
         # Agents must NOT set health themselves; the registry polls and writes here.
@@ -35,6 +37,7 @@ class AgentRegistry:
     # ── Registration ──────────────────────────────────────────────────────────
 
     def register(self, agent: BaseAgent) -> None:
+        """Index an agent by id; reject duplicates and warn on capability collisions."""
         # Gap 5: reject duplicate agent IDs — silent overwrite hides bugs
         if agent.agent_id in self._agents:
             raise ValueError(
@@ -44,9 +47,7 @@ class AgentRegistry:
             )
         # Gap 2: warn when two agents share a capability string
         for cap in agent.capabilities:
-            colliders = [
-                a.agent_id for a in self._agents.values() if cap in a.capabilities
-            ]
+            colliders = [a.agent_id for a in self._agents.values() if cap in a.capabilities]
             if colliders:
                 self._logger.warning(
                     "agent_capability_collision",
@@ -73,9 +74,11 @@ class AgentRegistry:
     # ── Lookup ────────────────────────────────────────────────────────────────
 
     def get(self, agent_id: str) -> BaseAgent | None:
+        """Return the agent for ``agent_id``, or None if not registered."""
         return self._agents.get(agent_id)
 
     def require(self, agent_id: str) -> BaseAgent:
+        """Like ``get`` but raise NOT_FOUND when the agent is missing."""
         agent = self.get(agent_id)
         if agent is None:
             raise GenieError(ErrorCode.NOT_FOUND, f"Agent '{agent_id}' not found")
@@ -164,9 +167,7 @@ class AgentRegistry:
 
     async def start(self) -> None:
         """Start the background health-check loop. Called from the app lifespan."""
-        self._health_task = asyncio.create_task(
-            self.run_health_checks(), name="agent-health-loop"
-        )
+        self._health_task = asyncio.create_task(self.run_health_checks(), name="agent-health-loop")
         self._logger.info("agent_registry_health_loop_started")
 
     async def stop(self) -> None:
@@ -182,4 +183,5 @@ class AgentRegistry:
     # ── Backward compat ───────────────────────────────────────────────────────
 
     def list_agents(self) -> list[str]:
+        """Return the registered agent ids (legacy helper)."""
         return list(self._agents.keys())

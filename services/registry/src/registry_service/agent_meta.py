@@ -1,3 +1,10 @@
+"""Agent metadata models — the registry's canonical agent record.
+
+``AgentMeta`` is the payload agents register and consumers discover; it carries
+the I/O schema, capability tags, A2A-aligned skills, and server-owned liveness
+fields. The SDK keeps an identical copy (``genie_agent_sdk.agent_meta``) so an
+agent's meta deserializes cleanly here.
+"""
 from __future__ import annotations
 
 from datetime import datetime

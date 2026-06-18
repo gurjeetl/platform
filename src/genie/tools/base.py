@@ -1,4 +1,5 @@
 """Tool base types — ToolCall, ToolResult, and ToolGateway protocol."""
+
 from __future__ import annotations
 
 import uuid
@@ -8,6 +9,8 @@ from pydantic import BaseModel, Field
 
 
 class ToolCall(BaseModel):
+    """A single request to run a tool: which tool, on whose behalf, with what args."""
+
     call_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     tool_id: str
     agent_id: str
@@ -15,6 +18,8 @@ class ToolCall(BaseModel):
 
 
 class ToolResult(BaseModel):
+    """Outcome of a ToolCall — output on success, or an error message on failure."""
+
     call_id: str
     tool_id: str
     success: bool
@@ -25,6 +30,8 @@ class ToolResult(BaseModel):
 
 @runtime_checkable
 class ToolGateway(Protocol):
+    """Contract for dispatching a ToolCall to its handler and returning a result."""
+
     async def execute(
         self,
         call: ToolCall,

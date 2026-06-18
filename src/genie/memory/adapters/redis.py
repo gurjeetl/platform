@@ -27,6 +27,8 @@ class RedisStore:
     """Thin async wrapper for blackboard hot-storage. No-ops when disabled."""
 
     def __init__(self, redis_url: str | None) -> None:
+        """Probe for the ``redis`` driver and enable the store; degrade to disabled
+        when ``redis_url`` is unset or the package is missing."""
         self._url = redis_url
         self._enabled = False
         self._clients: dict = {}  # event loop -> redis client
@@ -42,6 +44,7 @@ class RedisStore:
 
     @property
     def enabled(self) -> bool:
+        """True when the ``redis`` driver is available and a URL is configured."""
         return self._enabled
 
     def _client(self):
@@ -68,6 +71,8 @@ class RedisStore:
         return client
 
     async def set_json(self, key: str, value: Any, ttl_seconds: int = _DEFAULT_TTL_SECONDS) -> None:
+        """JSON-encode and store ``value`` under ``key`` with a TTL. No-op when
+        disabled; logs and swallows any error."""
         client = self._client()
         if not client:
             return
@@ -77,6 +82,7 @@ class RedisStore:
             logger.warning("redis_set_failed", key=key, error=str(exc))
 
     async def get_json(self, key: str) -> Any | None:
+        """Fetch and JSON-decode ``key``; None when missing, disabled, or on error."""
         client = self._client()
         if not client:
             return None
@@ -88,6 +94,7 @@ class RedisStore:
             return None
 
     async def aclose(self) -> None:
+        """Close every per-loop client and clear the registry (shutdown hook)."""
         for client in list(self._clients.values()):
             try:
                 await client.aclose()

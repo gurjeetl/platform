@@ -23,6 +23,7 @@ class RemoteAgent:
     """Adapter implementing ``genie.agents.base.BaseAgent`` over A2A transport."""
 
     def __init__(self, meta: AgentMeta, client: A2AClient | None = None) -> None:
+        """Wrap a discovered ``AgentMeta``; enabled iff its registry status is active."""
         self._meta = meta
         self._client = client or A2AClient()
         self._enabled = meta.status == "active"
@@ -63,6 +64,7 @@ class RemoteAgent:
         return "healthy"
 
     def get_info(self) -> AgentInfo:
+        """Project the discovered ``AgentMeta`` into the registry's ``AgentInfo`` card."""
         input_schema = {k: v.model_dump() for k, v in self._meta.input_schema.items()}
         output_schema = {k: v.model_dump() for k, v in self._meta.output_schema.items()}
         spec = CapabilitySpec(
@@ -87,6 +89,7 @@ class RemoteAgent:
 
     # ── Execution over A2A ──────────────────────────────────────────────────────
     async def execute(self, task: AgentTask, context: dict[str, Any]) -> AgentResult:
+        """Dispatch the task over A2A; map the reply (or any error) into an AgentResult."""
         args = (task.context or {}).get("args", {})
         try:
             reply = await self._client.send(

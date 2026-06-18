@@ -31,6 +31,7 @@ _PLAN_SCHEMA_HINT = (
 
 
 def _last_user_message(state: GraphState) -> str:
+    """Return the most recent user message text — the request being planned."""
     for m in reversed(state.messages):
         if m.role == "user":
             return m.content
@@ -38,6 +39,8 @@ def _last_user_message(state: GraphState) -> str:
 
 
 class PlannerNode:
+    """LLM-plans the user request into a DAG of subtasks over the live agent menu."""
+
     def __init__(
         self,
         agent_registry: AgentRegistry,
@@ -52,6 +55,7 @@ class PlannerNode:
         self._max_facts = int(getattr(settings, "planner_max_facts", 40))
 
     async def __call__(self, state: GraphState) -> dict[str, Any]:
+        """Build the plan and surface its subtask count to the trace span."""
         with node_span("planner") as span:
             with contextlib.suppress(Exception):
                 if span is not None:
@@ -64,11 +68,13 @@ class PlannerNode:
             return result
 
     def _agents(self) -> list:
+        """The currently enabled agents the planner is allowed to assign work to."""
         return [a for a in self._registry.list_all() if a.enabled]
 
     def _build_system_prompt(
         self, state: GraphState, agents: list, recall: list[dict], facts: dict[str, str]
     ) -> str:
+        """Assemble the planning prompt: capability menu, memory recall, replan context."""
         menu = render_capability_menu(agents)
         recall_block = ""
         if recall:
@@ -140,6 +146,7 @@ class PlannerNode:
         )
 
     def _build_plan(self, parsed: dict, agents: list) -> Plan:
+        """Validate the LLM's raw subtasks into a Plan; drop unknown agents / bad args."""
         raw_subtasks: list[dict[str, Any]] = parsed.get("subtasks", []) or []
         infos = {a.agent_id: a for a in agents}
         known_ids = set(infos)
@@ -169,6 +176,7 @@ class PlannerNode:
         return Plan(subtasks=clean)
 
     async def _plan(self, state: GraphState) -> dict[str, Any]:
+        """Recall memory, prompt the LLM, parse + validate, and return the plan dict."""
         user_msg = _last_user_message(state)
         agents = self._agents()
 

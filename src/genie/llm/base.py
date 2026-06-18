@@ -1,4 +1,5 @@
 """LLM provider protocol and response types."""
+
 from __future__ import annotations
 
 from typing import Any, AsyncIterator, Protocol, runtime_checkable
@@ -9,6 +10,8 @@ from genie.application.state import Message
 
 
 class LLMResponse(BaseModel):
+    """A completed LLM generation plus token-usage accounting."""
+
     content: str
     model: str
     prompt_tokens: int = 0
@@ -17,8 +20,12 @@ class LLMResponse(BaseModel):
 
 @runtime_checkable
 class LLMProvider(Protocol):
+    """Structural protocol every LLM backend must satisfy (complete + stream)."""
+
     @property
-    def name(self) -> str: ...
+    def name(self) -> str:
+        """Provider identifier used for registry lookup and logging."""
+        ...
 
     async def complete(
         self,
@@ -27,7 +34,9 @@ class LLMProvider(Protocol):
         max_tokens: int = 1024,
         temperature: float = 0.7,
         **kwargs: Any,
-    ) -> LLMResponse: ...
+    ) -> LLMResponse:
+        """Generate a single completion for *messages* and return it whole."""
+        ...
 
     async def stream(
         self,
@@ -36,4 +45,6 @@ class LLMProvider(Protocol):
         max_tokens: int = 1024,
         temperature: float = 0.7,
         **kwargs: Any,
-    ) -> AsyncIterator[str]: ...
+    ) -> AsyncIterator[str]:
+        """Yield the completion incrementally as text chunks."""
+        ...

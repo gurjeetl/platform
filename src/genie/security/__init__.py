@@ -1,4 +1,5 @@
 """Security — API-key auth, prompt injection detection, and ASGI middleware."""
+
 from genie.security.auth import (
     ApiKeyMiddleware,
     check_prompt_injection,

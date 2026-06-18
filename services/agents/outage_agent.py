@@ -1,9 +1,19 @@
+"""Standalone outage agent service (genie-agent-sdk).
+
+Lists grid outages or describes one by id, sourcing data from the MCP outage
+tools. Returns a structured ``view`` so the planner can chain a detail lookup off
+a listed id. Runs as an independent A2A service that self-registers with the
+Registry (see ``serve_agent`` at the bottom).
+"""
+
 import json
 
 from genie_agent_sdk import AgentMeta, BaseAgent, FieldSpec, serve_agent
 
 
 class OutageAgent(BaseAgent):
+    """SDK agent that lists/describes grid outages via the MCP outage tools."""
+
     system_prompt = "You are a grid-outage analyst summarizing outage reports."
     tool_names: list[str] = [
         "list_outage_ids",
@@ -13,12 +23,14 @@ class OutageAgent(BaseAgent):
 
     @staticmethod
     def _parse_json(s: str) -> dict:
+        """Parse an MCP tool's JSON string result; return ``{}`` on bad/empty input."""
         try:
             return json.loads(s)
         except (json.JSONDecodeError, TypeError):
             return {}
 
     def _list_view(self) -> tuple[str, dict] | str:
+        """Build the top-N outage-list (text, view), or a message if empty."""
         data = self._parse_json(self.call_mcp_tool("list_outage_ids", {}))
         items = data.get("items", [])
         total = data.get("total")
@@ -29,6 +41,7 @@ class OutageAgent(BaseAgent):
         return text, view
 
     def _detail_view(self, outage_id: int) -> tuple[str, dict] | str:
+        """Build the (text, view) detail for one outage, or an error message."""
         metadata = self._parse_json(
             self.call_mcp_tool("get_outage_metadata", {"outage_id": outage_id})
         )
@@ -51,6 +64,7 @@ class OutageAgent(BaseAgent):
         return text, view
 
     def run(self, state: dict) -> dict:
+        """Detail path when ``state.outage_id`` is set, else the top-N list path."""
         outage_id = state.get("outage_id")
         if outage_id is not None:
             oid = int(outage_id)

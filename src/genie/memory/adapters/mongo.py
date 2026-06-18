@@ -41,6 +41,8 @@ class MongoStore:
     """
 
     def __init__(self, uri: str, db: str) -> None:
+        """Connect to Mongo and bind the collections; degrade to disabled if the
+        ``motor`` driver is missing or the connection cannot be set up."""
         self._enabled = False
         self._client = None
         try:
@@ -62,10 +64,12 @@ class MongoStore:
 
     @property
     def enabled(self) -> bool:
+        """True when the driver loaded and the client connected."""
         return self._enabled
 
     # ── indexes ────────────────────────────────────────────────────────────
     async def ensure_indexes(self) -> None:
+        """Create the TTL and lookup indexes (idempotent; reconciles TTL drift)."""
         if not self._enabled:
             return
         try:
@@ -292,6 +296,7 @@ class MongoStore:
         return turns
 
     async def delete_conversation(self, thread_id: str) -> None:
+        """Delete a conversation from both durable and short-term collections."""
         if not self._enabled:
             return
         try:
@@ -301,6 +306,7 @@ class MongoStore:
             logger.warning("mongo_delete_conversation_failed", thread_id=thread_id, error=str(exc))
 
     async def aclose(self) -> None:
+        """Close the Mongo client and disable the store (shutdown hook)."""
         if self._client is not None:
             try:
                 self._client.close()

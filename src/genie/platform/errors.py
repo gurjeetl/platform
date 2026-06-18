@@ -1,4 +1,5 @@
 """Platform-wide error types and HTTP response helpers."""
+
 from __future__ import annotations
 
 from enum import Enum
@@ -7,6 +8,8 @@ from pydantic import BaseModel
 
 
 class ErrorCode(str, Enum):
+    """Stable machine-readable error codes; mapped to HTTP status in bootstrap."""
+
     INTERNAL_ERROR = "INTERNAL_ERROR"
     NOT_FOUND = "NOT_FOUND"
     VALIDATION_ERROR = "VALIDATION_ERROR"
@@ -30,6 +33,7 @@ class GenieError(Exception):
         message: str,
         details: dict | None = None,
     ) -> None:
+        """Build an error from a code, human message, and optional detail dict."""
         super().__init__(message)
         self._code = code
         self._message = message
@@ -37,17 +41,21 @@ class GenieError(Exception):
 
     @property
     def code(self) -> ErrorCode:
+        """The machine-readable error code."""
         return self._code
 
     @property
     def message(self) -> str:
+        """The human-readable error message."""
         return self._message
 
     @property
     def details(self) -> dict:
+        """Structured extra context (may be empty)."""
         return self._details
 
     def to_dict(self) -> dict:
+        """Serialise the error to a plain dict for logging or JSON responses."""
         return {
             "code": self._code.value,
             "message": self._message,
@@ -55,6 +63,7 @@ class GenieError(Exception):
         }
 
     def __repr__(self) -> str:
+        """Developer-friendly representation showing code and message."""
         return f"GenieError(code={self._code!r}, message={self._message!r})"
 
 

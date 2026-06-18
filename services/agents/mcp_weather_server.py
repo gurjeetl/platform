@@ -42,6 +42,7 @@ _OUTAGE_INDEX: dict[int, dict[str, Any]] = {}
 
 
 def _load_outage_data() -> dict[str, Any]:
+    """Load + cache the outage report JSON, indexing each outage by id (lazily, once)."""
     global _OUTAGE_CACHE
     if _OUTAGE_CACHE is None:
         with OUTAGE_DATA_PATH.open(encoding="utf-8") as f:
@@ -137,6 +138,7 @@ _K1, _B = 1.5, 0.75
 
 
 def _tokenize(text: str) -> list[str]:
+    """Lowercase + split text into alphanumeric tokens for BM25 indexing."""
     return _TOKEN_RE.findall((text or "").lower())
 
 
@@ -144,6 +146,8 @@ class _DocIndex:
     """Tiny in-memory BM25 index over the bundled DOCS corpus."""
 
     def __init__(self, docs: list[dict[str, str]]) -> None:
+        """Precompute per-doc tokens/term-frequencies/lengths and corpus stats (N,
+        avgdl, document frequency) used by the BM25 scoring in ``search``."""
         self.docs = docs
         self._tokens = [_tokenize(d["text"]) for d in docs]
         self._tf = [Counter(t) for t in self._tokens]
@@ -157,12 +161,14 @@ class _DocIndex:
         self._df = df
 
     def _idf(self, term: str) -> float:
+        """BM25 inverse document frequency for a term (0 if it appears nowhere)."""
         df = self._df.get(term, 0)
         if df == 0:
             return 0.0
         return math.log(1 + (self.N - df + 0.5) / (df + 0.5))
 
     def search(self, query: str, k: int = 4) -> list[dict]:
+        """BM25-score every doc against the query; return the top-k with source + score."""
         q_terms = _tokenize(query)
         if not q_terms or self.N == 0:
             return []

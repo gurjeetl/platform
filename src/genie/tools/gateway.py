@@ -1,4 +1,5 @@
 """Concrete ToolGateway — dispatches ToolCalls to registered tool callables."""
+
 from __future__ import annotations
 
 import contextlib
@@ -38,10 +39,12 @@ class ConcreteToolGateway:
         self._tools: dict[str, ToolHandler] = {}
 
     def register(self, tool_id: str, handler: ToolHandler) -> None:
+        """Bind ``tool_id`` to an async handler (later registrations overwrite)."""
         self._tools[tool_id] = handler
         logger.info("tool_registered", tool_id=tool_id)
 
     def list_tools(self) -> list[str]:
+        """Ids of all currently registered tools."""
         return list(self._tools.keys())
 
     async def execute(
@@ -50,11 +53,12 @@ class ConcreteToolGateway:
         requesting_agent_id: str,
         user_id: str,
     ) -> ToolResult:
+        """Run the call's handler under a trace span. Raises GenieError(NOT_FOUND)
+        for an unknown tool; any other handler exception becomes a failed
+        ToolResult rather than propagating."""
         handler = self._tools.get(call.tool_id)
         if handler is None:
-            raise GenieError(
-                ErrorCode.NOT_FOUND, f"Tool '{call.tool_id}' not registered"
-            )
+            raise GenieError(ErrorCode.NOT_FOUND, f"Tool '{call.tool_id}' not registered")
 
         t0 = time.perf_counter()
         try:
@@ -111,16 +115,19 @@ class ConcreteToolGateway:
         """
         try:
             import mlflow
+
             with mlflow.start_span(
                 name=f"tool:{call.tool_id}",
                 span_type="TOOL",
             ) as span:
                 with contextlib.suppress(Exception):
-                    span.set_inputs({
-                        "tool_id": call.tool_id,
-                        "agent_id": agent_id,
-                        "parameters": json.dumps(call.parameters, default=str),
-                    })
+                    span.set_inputs(
+                        {
+                            "tool_id": call.tool_id,
+                            "agent_id": agent_id,
+                            "parameters": json.dumps(call.parameters, default=str),
+                        }
+                    )
 
                 output = await handler(call.parameters)
                 elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -148,16 +155,22 @@ class ConcreteToolGateway:
         elapsed_ms: float,
         error: str,
     ) -> None:
+        """Record a failed-tool MLflow span; silently skipped if MLflow is absent."""
         with contextlib.suppress(Exception):
             import mlflow
+
             with mlflow.start_span(name=f"tool:{call.tool_id}", span_type="TOOL") as span:
-                span.set_inputs({
-                    "tool_id": call.tool_id,
-                    "agent_id": agent_id,
-                    "parameters": json.dumps(call.parameters, default=str),
-                })
-                span.set_outputs({
-                    "success": False,
-                    "elapsed_ms": round(elapsed_ms, 2),
-                    "error": error,
-                })
+                span.set_inputs(
+                    {
+                        "tool_id": call.tool_id,
+                        "agent_id": agent_id,
+                        "parameters": json.dumps(call.parameters, default=str),
+                    }
+                )
+                span.set_outputs(
+                    {
+                        "success": False,
+                        "elapsed_ms": round(elapsed_ms, 2),
+                        "error": error,
+                    }
+                )

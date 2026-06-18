@@ -1,4 +1,5 @@
 """MLflow experiment tracker — records pipeline runs and metrics."""
+
 from __future__ import annotations
 
 import contextlib
@@ -26,6 +27,7 @@ def node_span(name: str) -> Generator[Any, None, None]:
     """
     try:
         import mlflow
+
         with mlflow.start_span(name=name, span_type="CHAIN") as span:
             yield span
     except Exception:
@@ -40,6 +42,7 @@ class MLflowTracker:
     """
 
     def __init__(self, tracking_uri: str, experiment_name: str) -> None:
+        """Store config and attempt MLflow setup; stays disabled if it fails."""
         self._tracking_uri = tracking_uri
         self._experiment_name = experiment_name
         self._enabled = False
@@ -47,6 +50,7 @@ class MLflowTracker:
         self._setup()
 
     def _setup(self) -> None:
+        """Configure the tracking URI and enable autolog; no-op if mlflow absent."""
         try:
             import mlflow as _mlflow
 
@@ -70,6 +74,7 @@ class MLflowTracker:
         try:
             import mlflow as _mlflow
             import mlflow.langchain
+
             _mlflow.langchain.autolog(log_traces=True)
             logger.info("mlflow_autolog_enabled")
         except Exception as exc:
@@ -81,6 +86,7 @@ class MLflowTracker:
             return
         try:
             import mlflow as _mlflow
+
             _mlflow.set_experiment(self._experiment_name)
             self._experiment_set = True
         except Exception:
@@ -103,6 +109,7 @@ class MLflowTracker:
             yield ctx
 
     def log_params(self, params: dict[str, Any]) -> None:
+        """Log run params (stringified); silent no-op when tracking is disabled."""
         if not self._enabled:
             return
         with contextlib.suppress(Exception):
@@ -111,6 +118,7 @@ class MLflowTracker:
             mlflow.log_params({k: str(v) for k, v in params.items()})
 
     def log_metrics(self, metrics: dict[str, float], step: int | None = None) -> None:
+        """Log run metrics; silent no-op when tracking is disabled."""
         if not self._enabled:
             return
         with contextlib.suppress(Exception):
@@ -119,6 +127,7 @@ class MLflowTracker:
             mlflow.log_metrics(metrics, step=step)
 
     def log_artifact(self, path: str) -> None:
+        """Log a file artifact; silent no-op when tracking is disabled."""
         if not self._enabled:
             return
         with contextlib.suppress(Exception):
@@ -127,6 +136,7 @@ class MLflowTracker:
             mlflow.log_artifact(path)
 
     def set_tag(self, key: str, value: str) -> None:
+        """Set a run tag; silent no-op when tracking is disabled."""
         if not self._enabled:
             return
         with contextlib.suppress(Exception):
@@ -144,6 +154,7 @@ class RunContext:
         run_name: str,
         tags: dict[str, str],
     ) -> None:
+        """Capture the parent tracker, run name, and tags for the run."""
         self._tracker = tracker
         self._run_name = run_name
         self._tags = tags
@@ -151,6 +162,7 @@ class RunContext:
         self._run: Any = None
 
     async def __aenter__(self) -> "RunContext":
+        """Start the MLflow run (if enabled) and begin timing."""
         self._start_time = time.perf_counter()
         if self._tracker._enabled:
             with contextlib.suppress(Exception):
@@ -160,6 +172,7 @@ class RunContext:
         return self
 
     async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        """Record duration + success/failure tags and close the MLflow run."""
         elapsed = (time.perf_counter() - self._start_time) * 1000
         if self._tracker._enabled and self._run is not None:
             with contextlib.suppress(Exception):
@@ -180,7 +193,9 @@ class RunContext:
         )
 
     def log_params(self, params: dict[str, Any]) -> None:
+        """Proxy to the tracker — log params on the active run."""
         self._tracker.log_params(params)
 
     def log_metrics(self, metrics: dict[str, float], step: int | None = None) -> None:
+        """Proxy to the tracker — log metrics on the active run."""
         self._tracker.log_metrics(metrics, step=step)

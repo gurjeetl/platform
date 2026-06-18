@@ -28,12 +28,16 @@ ERR_AGENT_EXECUTION = -32001  # custom: the agent ran but returned an error
 
 # --- Message parts ----------------------------------------------------------
 class TextPart(BaseModel):
+    """A2A text message part — plain-language content."""
+
     kind: Literal["text"] = "text"
     text: str
     metadata: dict[str, Any] | None = None
 
 
 class DataPart(BaseModel):
+    """A2A structured message part — carries args (request) or a view (response)."""
+
     kind: Literal["data"] = "data"
     data: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] | None = None
@@ -60,11 +64,15 @@ class Message(BaseModel):
 
 # --- Agent Card (discovery) -------------------------------------------------
 class AgentCapabilities(BaseModel):
+    """Optional A2A protocol features. This SDK supports neither (synchronous only)."""
+
     streaming: bool = False
     pushNotifications: bool = False
 
 
 class AgentSkill(BaseModel):
+    """One capability advertised on the Agent Card (A2A ``AgentSkill``)."""
+
     id: str
     name: str
     description: str = ""
@@ -75,6 +83,8 @@ class AgentSkill(BaseModel):
 
 
 class AgentCard(BaseModel):
+    """A2A discovery document served at ``/.well-known/agent.json``."""
+
     name: str
     description: str = ""
     url: str
@@ -89,12 +99,16 @@ class AgentCard(BaseModel):
 
 # --- JSON-RPC envelopes -----------------------------------------------------
 class JsonRpcError(BaseModel):
+    """JSON-RPC 2.0 error object (see the ``ERR_*`` codes above)."""
+
     code: int
     message: str
     data: dict[str, Any] | None = None
 
 
 class JsonRpcRequest(BaseModel):
+    """JSON-RPC 2.0 request envelope (e.g. ``message/send``)."""
+
     jsonrpc: Literal["2.0"] = "2.0"
     id: str | int | None = None
     method: str
@@ -102,6 +116,8 @@ class JsonRpcRequest(BaseModel):
 
 
 class JsonRpcResponse(BaseModel):
+    """JSON-RPC 2.0 response envelope: exactly one of ``result`` / ``error`` is set."""
+
     jsonrpc: Literal["2.0"] = "2.0"
     id: str | int | None = None
     result: dict[str, Any] | None = None
@@ -110,10 +126,12 @@ class JsonRpcResponse(BaseModel):
 
 # --- Part / message helpers -------------------------------------------------
 def text_part(text: str) -> TextPart:
+    """Wrap a string in a :class:`TextPart`."""
     return TextPart(text=text)
 
 
 def data_part(data: dict[str, Any]) -> DataPart:
+    """Wrap a dict in a :class:`DataPart`."""
     return DataPart(data=data)
 
 

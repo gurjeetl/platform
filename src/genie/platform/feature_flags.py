@@ -1,4 +1,5 @@
 """Feature-flag registry backed by the platform Settings."""
+
 from __future__ import annotations
 
 from genie.platform.config import Settings

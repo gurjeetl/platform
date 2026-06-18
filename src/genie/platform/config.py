@@ -3,6 +3,7 @@
 Supports flat env-var overrides (GENIE_ prefix) and a YAML config file
 that can carry nested structures for llm_services and mcp_services.
 """
+
 from __future__ import annotations
 
 import os
@@ -15,6 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 # ── Nested config models (loaded from YAML, not env vars) ─────────────────────
+
 
 class LLMModelConfig(BaseModel):
     """Configuration for one LLM backend (OpenAI-compatible HTTP API)."""
@@ -31,6 +33,7 @@ class LLMModelConfig(BaseModel):
 
     @property
     def base_url(self) -> str:
+        """Resolved endpoint: explicit ``url`` wins, else host/port/path scheme."""
         if self.url:
             return self.url
         return f"http://{self.host}:{self.port}/{self.prompting_path}"
@@ -59,7 +62,10 @@ class ApplicationServiceConfig(BaseModel):
 
 # ── Top-level Settings ────────────────────────────────────────────────────────
 
+
 class Settings(BaseSettings):
+    """Top-level platform settings; flat fields come from env (GENIE_*) or YAML."""
+
     model_config = SettingsConfigDict(
         env_prefix="GENIE_",
         env_file=".env",
@@ -103,7 +109,9 @@ class Settings(BaseSettings):
     api_key: str | None = None
 
     # MLflow / Tracking
-    mlflow_tracking_uri: str = "sqlite:///mlruns.db"  # override in config/default.yaml for absolute path
+    mlflow_tracking_uri: str = (
+        "sqlite:///mlruns.db"  # override in config/default.yaml for absolute path
+    )
     mlflow_experiment_name: str = "genie-platform"
 
     # Human-in-the-loop
@@ -129,11 +137,11 @@ class Settings(BaseSettings):
     memory_backend: Literal["in_memory", "mongo"] = "in_memory"
     mongodb_uri: str = "mongodb://localhost:27017"
     mongodb_db: str = "agent_memory"
-    redis_url: str | None = None          # hot blackboard mirror; None = disabled
-    milvus_uri: str | None = None         # remote Milvus; None = use milvus_db_path
+    redis_url: str | None = None  # hot blackboard mirror; None = disabled
+    milvus_uri: str | None = None  # remote Milvus; None = use milvus_db_path
     milvus_db_path: str = "./milvus_local.db"
     milvus_collection: str = "long_term_memory"
-    postgres_dsn: str | None = None       # durable commit store; None = disabled
+    postgres_dsn: str | None = None  # durable commit store; None = disabled
     openai_embed_model: str = "text-embedding-3-small"
 
     # ── Distributed agents (A2A + registry discovery) ─────────────────────────
@@ -151,6 +159,9 @@ class Settings(BaseSettings):
     agent_refresh_seconds: float = 30.0
 
     # ── Router / planner tuning ───────────────────────────────────────────────
+    # Toggle the router step. When false, the pipeline skips fast/chitchat triage
+    # and every request goes straight to the full planner (input_guard → planner → …).
+    enable_router: bool = True
     router_intent_classifier: bool = True
     router_intent_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     router_intent_threshold: float = 0.30
@@ -190,9 +201,7 @@ class Settings(BaseSettings):
 
         # Collect updates: YAML flat values only when env var is absent
         updates: dict[str, Any] = {
-            k: v
-            for k, v in yaml_data.items()
-            if f"GENIE_{k.upper()}" not in os.environ
+            k: v for k, v in yaml_data.items() if f"GENIE_{k.upper()}" not in os.environ
         }
 
         # Nested configs always come from YAML (env vars can't represent them)
@@ -200,8 +209,7 @@ class Settings(BaseSettings):
             updates["llm_services"] = LLMServicesConfig.model_validate(llm_raw)
         if mcp_raw and isinstance(mcp_raw, dict):
             updates["mcp_services"] = {
-                name: MCPServiceConfig.model_validate(svc)
-                for name, svc in mcp_raw.items()
+                name: MCPServiceConfig.model_validate(svc) for name, svc in mcp_raw.items()
             }
         if app_svc_raw and isinstance(app_svc_raw, dict):
             updates["application_services"] = {

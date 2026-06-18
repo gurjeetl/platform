@@ -1,8 +1,10 @@
 """BaseAgent composition: LLM + MCP + memory, with a tool-calling run loop.
 
-Trimmed from the framework's BaseAgent: the mlflow tracing and the
-``observability.Observable`` base class are removed and replaced with stdlib
-logging, so an agent built on this SDK depends on neither mlflow nor genie.
+``BaseAgent`` inherits :class:`~genie_agent_sdk.observable.Observable`, so every
+agent's ``run()`` is automatically wrapped in an observability span (an MLflow
+``AGENT`` span when mlflow is configured, a stdlib-logging timing span otherwise).
+mlflow stays an *optional* dependency — an agent built on this SDK still depends
+on neither mlflow nor genie at import time.
 
 State shape
 -----------
@@ -14,22 +16,24 @@ task's ``args`` are spread in) and the agent records its answer on
 from __future__ import annotations
 
 import asyncio
-import logging
+import contextlib
 import os
 from typing import Any, Callable
 
+import mlflow
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
+from mlflow.entities import SpanType
 
+from genie_agent_sdk.events import Events
 from genie_agent_sdk.llm_client import LLMClient
 from genie_agent_sdk.mcp_client import MCPClient
 from genie_agent_sdk.memory import AgentMemory
+from genie_agent_sdk.observable import Observable
 
 load_dotenv()
-
-_log = logging.getLogger("genie_agent_sdk.agent")
 
 # AgentState is an open dict: a known set of control keys plus arbitrary args
 # spread in by the harness. Kept as a plain alias so the SDK carries no rigid
@@ -95,12 +99,19 @@ def make_chat_model(model: str | None = None) -> ChatOpenAI:
     )
 
 
-class BaseAgent:
+class BaseAgent(Observable):
     """Single composed agent: orchestrates an LLMClient, MCPClient, and AgentMemory.
 
     Subclasses set ``system_prompt`` and ``tool_names``, then either override
     ``run()`` or call ``answer_with_tool()`` from inside their own ``run()``.
+
+    Inherits :class:`Observable`, so ``run()`` is auto-wrapped in an ``AGENT``
+    span for every subclass — no per-agent decoration needed.
     """
+
+    _span_type: str = SpanType.AGENT
+    _component_kind: str = "agent"
+    _traced_methods: tuple[str, ...] = ("run",)
 
     system_prompt: str = ""
 
@@ -110,8 +121,14 @@ class BaseAgent:
     tool_names: list[str] | None = None
 
     def __init__(self) -> None:
-        self.llm_client = LLMClient(make_chat_model())
-        self.mcp_client = MCPClient()
+        """Compose the LLM/MCP/memory clients; load MCP tools if MCP_SERVER_URL is set.
+
+        Passes ``self`` as the observer to both clients so their events flow
+        through this agent's :meth:`log` / :meth:`log_event` (inherited from
+        :class:`Observable`) and onto the active span.
+        """
+        self.llm_client = LLMClient(make_chat_model(), observer=self)
+        self.mcp_client = MCPClient(observer=self)
         self.memory = AgentMemory()
         self.tools: list[BaseTool] = []
         if os.getenv("MCP_SERVER_URL"):
@@ -121,12 +138,16 @@ class BaseAgent:
     # State helpers
     # ------------------------------------------------------------------
     def _increment(self, state: AgentState) -> AgentState:
+        """Bump the per-run iteration counter."""
         return patch(state, iteration_count=state.get("iteration_count", 0) + 1)
 
     def append_response(self, state: AgentState, text: str) -> AgentState:
+        """Append an assistant message to the state without marking it complete."""
         return patch(state, messages=[AIMessage(content=text)])
 
     def set_final_output(self, state: AgentState, text: str) -> AgentState:
+        """Record a plain-text answer and mark the run complete."""
+        self.log_event(Events.FINAL_OUTPUT_SET, length=len(text) if text else 0)
         return patch(
             state,
             final_output=text,
@@ -135,6 +156,12 @@ class BaseAgent:
         )
 
     def set_final_view(self, state: AgentState, text: str, view: dict) -> AgentState:
+        """Record an answer plus a structured ``view`` and mark the run complete."""
+        self.log_event(
+            Events.FINAL_OUTPUT_SET,
+            length=len(text) if text else 0,
+            view_type=view.get("type") if isinstance(view, dict) else None,
+        )
         return patch(
             state,
             final_output=text,
@@ -144,11 +171,14 @@ class BaseAgent:
         )
 
     def set_error(self, state: AgentState, msg: str) -> AgentState:
-        _log.error("agent.error_set agent=%s error=%s", type(self).__name__, msg)
+        """Record an error and mark the run complete (no final output)."""
+        self.log("error", Events.AGENT_ERROR_SET, agent=type(self).__name__, error=msg)
         return patch(state, error=msg, is_complete=True)
 
     def _append_trace(self, state: AgentState, **kwargs) -> AgentState:
+        """Append a human-readable trace line to short-term memory for debugging."""
         cls_name = type(self).__name__
+        self.log_event(f"{cls_name}.trace", **{k: str(v) for k, v in kwargs.items()})
         entry = f"[{cls_name}] " + ", ".join(f"{k}={v}" for k, v in kwargs.items())
         existing = list(state.get("short_term_memory") or [])
         return patch(state, short_term_memory=existing + [entry])
@@ -157,20 +187,28 @@ class BaseAgent:
     # LLM / message helpers (used by subclasses with custom run())
     # ------------------------------------------------------------------
     def format_messages(self, state: AgentState) -> list[BaseMessage]:
+        """Trim the message window and prepend the system prompt + known facts."""
         raw: list[BaseMessage] = state.get("messages") or []
         trimmed = self.memory.trim(raw)
+        self.log_event(
+            Events.FORMAT_MESSAGES,
+            input_message_count=len(raw),
+            trimmed_message_count=len(trimmed),
+        )
         facts = state.get("long_term_memory_keys") or []
         return LLMClient.build_messages(
             self.system_prompt, trimmed, self.memory.facts_block(facts)
         )
 
     def call_llm(self, messages: list[BaseMessage]) -> str:
+        """Invoke the LLM and return its text reply."""
         return self.llm_client.call(messages)
 
     # ------------------------------------------------------------------
     # MCP loading + single-tool invocation
     # ------------------------------------------------------------------
     def _load_mcp_from_env(self) -> None:
+        """Connect to the env-configured MCP server and bind the agent's tools."""
         # Empty list means the subclass explicitly opted out — skip the connection.
         if self.tool_names is not None and not self.tool_names:
             return
@@ -179,11 +217,20 @@ class BaseAgent:
             return
         try:
             self._run_async(self._async_load_mcp_tools(config))
-            _log.info("mcp.tools_loaded agent=%s count=%s", type(self).__name__, len(self.tools))
+            self.log(
+                "info", Events.MCP_TOOLS_LOADED, agent=type(self).__name__, count=len(self.tools)
+            )
         except Exception as e:
-            _log.error("mcp.load_failed agent=%s error=%s", type(self).__name__, e)
+            self.log(
+                "error",
+                Events.MCP_LOAD_FAILED,
+                agent=type(self).__name__,
+                error=str(e),
+                exc_info=True,
+            )
 
     async def _async_load_mcp_tools(self, config) -> None:
+        """Load the permitted MCP tools and bind them onto the LLM client."""
         self.tools = await self.mcp_client.load_tools(config, self.tool_names)
         self.llm_client.bind_tools(self.tools)
 
@@ -198,13 +245,37 @@ class BaseAgent:
         return loop.run_until_complete(coro)
 
     def call_mcp_tool(self, name: str, args: dict) -> str:
+        """Invoke one loaded MCP tool by name and return its unwrapped text result.
+
+        The invocation is wrapped in an MLflow ``TOOL`` span carrying the inputs
+        and the (truncated) result. Span operations are guarded so a tracing
+        failure never breaks the tool call itself.
+        """
         tool = next((t for t in self.tools if t.name == name), None)
         if tool is None:
             raise LookupError(f"MCP tool '{name}' not available")
-        raw = self._run_async(tool.ainvoke(args))
-        report = MCPClient.unwrap_result(raw)
-        _log.debug("mcp.tool_call tool=%s result=%s", name, report[:200])
+        with self._tool_span(name, args) as span:
+            raw = self._run_async(tool.ainvoke(args))
+            report = MCPClient.unwrap_result(raw)
+            if span is not None:
+                with contextlib.suppress(Exception):
+                    span.set_outputs({"result": report})
+                    span.set_attribute("mcp.tool", name)
+        self.log_event(Events.MCP_TOOL_CALL, tool=name, args=str(args), result=report[:200])
         return report
+
+    @contextlib.contextmanager
+    def _tool_span(self, name: str, args: dict):
+        """Open a ``TOOL`` span for an MCP call; yield None if the backend is down."""
+        try:
+            cm = mlflow.start_span(name=f"mcp.{name}", span_type=SpanType.TOOL)
+        except Exception:  # pragma: no cover - backend down / no active trace
+            yield None
+            return
+        with cm as span:
+            with contextlib.suppress(Exception):
+                span.set_inputs({"tool": name, "args": args})
+            yield span
 
     def answer_with(
         self,
@@ -223,7 +294,13 @@ class BaseAgent:
         except LookupError as e:
             return self.set_error(updated, str(e))
         except Exception as e:
-            _log.error("agent.run_failed agent=%s error=%s", type(self).__name__, e)
+            self.log(
+                "error",
+                Events.AGENT_RUN_FAILED,
+                agent=type(self).__name__,
+                error=str(e),
+                exc_info=True,
+            )
             return self.set_error(updated, str(e))
 
         if isinstance(result, tuple):
@@ -254,6 +331,11 @@ class BaseAgent:
     # Main agent loop
     # ------------------------------------------------------------------
     def run(self, state: AgentState) -> AgentState:
+        """Default entry point: one-shot LLM answer, or a tool-calling loop if tools exist.
+
+        Subclasses typically override this (often calling ``answer_with_tool``)
+        when they have a fixed single-tool flow.
+        """
         state = self._increment(state)
         messages = self.format_messages(state)
 
@@ -263,6 +345,7 @@ class BaseAgent:
         return self._run_tool_loop(state, messages)
 
     def _run_tool_loop(self, state: AgentState, messages: list[BaseMessage]) -> AgentState:
+        """Iterate LLM <-> tool calls until a tool-free reply, or max_iterations is hit."""
         max_iters = state.get("max_iterations") or 10
         total_tool_calls = 0
 
@@ -270,11 +353,13 @@ class BaseAgent:
             response = self.llm_client.invoke(messages)
 
             if not response.tool_calls:
+                self._log_loop_end(iteration + 1, total_tool_calls, len(messages) + 1)
                 return self.set_final_output(state, response.content)
 
             messages, state = self._step_tools(response, messages, state, iteration + 1)
             total_tool_calls += len(response.tool_calls)
 
+        self._log_loop_end(max_iters, total_tool_calls, exceeded=True)
         return self.set_error(
             state, f"exceeded max_iterations ({max_iters}) without a final answer"
         )
@@ -286,8 +371,83 @@ class BaseAgent:
         state: AgentState,
         iteration: int,
     ) -> tuple[list[BaseMessage], AgentState]:
+        """Execute the LLM's requested tool calls and append their results to messages."""
+        self._log_tool_calls(iteration, response.tool_calls)
         messages.append(response)
         tool_messages = asyncio.run(self.llm_client.execute_tool_calls(response.tool_calls))
         messages.extend(tool_messages)
+        self._log_tool_results(iteration, response.tool_calls, tool_messages)
         state = self._append_trace(state, tool_calls=len(response.tool_calls))
         return messages, state
+
+    # ------------------------------------------------------------------
+    # Loop logging
+    # ------------------------------------------------------------------
+    def _log_tool_calls(self, iteration: int, tool_calls: list[dict]) -> None:
+        """Emit the LLM's requested tool calls for this iteration."""
+        self.log_event(
+            Events.LLM_TOOL_CALLS,
+            iteration=iteration,
+            count=len(tool_calls),
+            calls=str([{"name": tc["name"], "args": tc["args"]} for tc in tool_calls]),
+        )
+
+    def _log_tool_results(
+        self,
+        iteration: int,
+        tool_calls: list[dict],
+        tool_messages: list[ToolMessage],
+    ) -> None:
+        """Emit the (truncated) results of this iteration's tool calls."""
+        self.log_event(
+            Events.LLM_TOOL_RESULTS,
+            iteration=iteration,
+            results=str([
+                {"name": tc["name"], "result": str(tm.content)[:200]}
+                for tc, tm in zip(tool_calls, tool_messages)
+            ]),
+        )
+
+    def _log_loop_end(
+        self,
+        iterations: int,
+        total_tool_calls: int,
+        final_message_count: int | None = None,
+        exceeded: bool = False,
+    ) -> None:
+        """Emit a summary of how the tool loop terminated."""
+        attrs: dict = {"iterations": iterations, "total_tool_calls": total_tool_calls}
+        if exceeded:
+            attrs["exceeded_max_iters"] = True
+        if final_message_count is not None:
+            attrs["final_message_count"] = final_message_count
+        self.log_event(Events.AGENT_SCRATCHPAD, **attrs)
+
+    # ------------------------------------------------------------------
+    # Agent-to-agent (A2A) — discover a peer via the Registry, message it
+    # ------------------------------------------------------------------
+    def call_peer(
+        self,
+        agent_id: str,
+        args: dict,
+        context: dict | None = None,
+        *,
+        sla_ms: int = 10000,
+    ) -> str:
+        """Delegate to a peer agent over A2A, discovered through the Registry.
+
+        Returns the peer's text reply. Lets an agent fan work out to another agent
+        mid-run (the "agents talk to each other" half of A2A Hybrid) without the
+        two ever importing each other — discovery stays centralized in the
+        Registry, transport is JSON-RPC ``message/send``.
+        """
+        from genie_agent_sdk.a2a import get_text
+        from genie_agent_sdk.a2a_client import call_agent
+
+        self.log_event(Events.PEER_CALL, peer=agent_id, args=str(args))
+        try:
+            reply = self._run_async(call_agent(agent_id, args, context or {}, sla_ms=sla_ms))
+        except Exception as e:
+            self.log("error", Events.PEER_CALL_FAILED, peer=agent_id, error=str(e), exc_info=True)
+            raise
+        return get_text(reply)

@@ -1,4 +1,5 @@
 """RemoteRAGAdapter — HTTP client for the external RAG service."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -29,6 +30,8 @@ class RemoteRAGAdapter:
         max_retries: int = 3,
         api_key: str | None = None,
     ) -> None:
+        """Build the persistent httpx client (optional Bearer auth) for the
+        configured RAG service base URL."""
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._max_retries = max_retries
@@ -44,6 +47,8 @@ class RemoteRAGAdapter:
     # ── RetrievalService ──────────────────────────────────────────────────────
 
     async def retrieve(self, request: RetrievalRequest) -> RetrievalResponse:
+        """POST the query and parse the chunks. Retries on 5xx/network errors;
+        4xx breaks immediately. Returns retrieval_available=False on failure."""
         for attempt in range(self._max_retries):
             try:
                 resp = await self._client.post(
@@ -85,6 +90,8 @@ class RemoteRAGAdapter:
     # ── IngestionService ──────────────────────────────────────────────────────
 
     async def ingest(self, content: str, metadata: dict[str, Any] | None = None) -> None:
+        """POST raw content to the service for indexing. Best-effort: retries then
+        gives up silently (logged) so ingestion never crashes the caller."""
         import uuid
 
         meta = metadata or {}
@@ -104,11 +111,11 @@ class RemoteRAGAdapter:
                 logger.debug("remote_rag_ingested", doc_id=doc_id)
                 return
             except Exception as exc:
-                logger.warning(
-                    "remote_rag_ingest_error", error=str(exc), attempt=attempt + 1
-                )
+                logger.warning("remote_rag_ingest_error", error=str(exc), attempt=attempt + 1)
 
     async def ingest_request(self, request: IngestRequest) -> IngestJobStatus:
+        """Submit a file-based ingest job. Retries then returns a ``failed``
+        status when the service stays unavailable."""
         for attempt in range(self._max_retries):
             try:
                 resp = await self._client.post(
@@ -132,4 +139,5 @@ class RemoteRAGAdapter:
         )
 
     async def aclose(self) -> None:
+        """Close the underlying httpx client (shutdown hook)."""
         await self._client.aclose()

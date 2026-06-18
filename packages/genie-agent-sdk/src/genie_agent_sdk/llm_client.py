@@ -24,6 +24,8 @@ _log = logging.getLogger("genie_agent_sdk.llm")
 
 
 class Observer(Protocol):
+    """Structural type for an event/log sink the LLM client reports through."""
+
     def log(self, level: str, event: str, **attrs) -> None: ...
     def log_event(self, name: str, **attrs) -> None: ...
 
@@ -32,9 +34,11 @@ class _StdlibObserver:
     """Default no-op-ish observer: routes events to stdlib logging."""
 
     def log(self, level: str, event: str, **attrs) -> None:
+        """Emit an event at the named level via stdlib logging."""
         _log.log(getattr(logging, level.upper(), logging.INFO), "%s %s", event, attrs)
 
     def log_event(self, name: str, **attrs) -> None:
+        """Emit a named debug-level event."""
         _log.debug("%s %s", name, attrs)
 
 
@@ -42,16 +46,19 @@ class LLMClient:
     """Owns the ChatOpenAI handle, message construction, and tool execution."""
 
     def __init__(self, llm: ChatOpenAI, observer: Observer | None = None) -> None:
+        """Wrap a ChatOpenAI handle; default to the stdlib-logging observer."""
         self.llm = llm
         self.tools: list[BaseTool] = []
         self._observer = observer or _StdlibObserver()
 
     def bind_tools(self, tools: list[BaseTool]) -> None:
+        """Bind tools onto the model so the LLM can emit tool calls."""
         self.tools = tools
         if tools:
             self.llm = self.llm.bind_tools(tools)
 
     def invoke(self, messages: list[BaseMessage]) -> AIMessage:
+        """Invoke the model, returning the raw AIMessage (may carry tool calls)."""
         try:
             return self.llm.invoke(messages)
         except Exception as e:
@@ -59,9 +66,15 @@ class LLMClient:
             raise
 
     def call(self, messages: list[BaseMessage]) -> str:
+        """Invoke the model and return only its text content."""
         return self.invoke(messages).content
 
     async def execute_tool_calls(self, tool_calls: list[dict]) -> list[ToolMessage]:
+        """Run the LLM's tool calls concurrently, one ToolMessage per call.
+
+        Unknown tools and per-tool failures are turned into error ToolMessages
+        rather than raised, so the loop can always feed results back to the LLM.
+        """
         tool_map = {t.name: t for t in self.tools}
 
         async def _call_one(tc: dict) -> ToolMessage:
@@ -89,6 +102,10 @@ class LLMClient:
         trimmed: list[BaseMessage],
         facts_block: str,
     ) -> list[BaseMessage]:
+        """Assemble the LLM message list: system prompt (+ facts) then the history.
+
+        Coerces any dict-shaped history entries into Human/AI messages.
+        """
         prompt = system_prompt
         if facts_block:
             prompt = f"{prompt}\n\n## Known context about this user:\n{facts_block}"

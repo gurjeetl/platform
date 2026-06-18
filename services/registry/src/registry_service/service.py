@@ -53,6 +53,7 @@ def require_auth(authorization: str | None = Header(None)) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Ensure Mongo indexes (incl. the TTL backstop) on startup; close on shutdown."""
     store = get_registry_store()
     await store.ensure_indexes()
     _log.info("registry.indexes_ensured ttl_seconds=%s", store.ttl_seconds)
@@ -64,6 +65,7 @@ app = FastAPI(title="Agent Registry Service", lifespan=lifespan)
 
 
 def _heartbeat_interval() -> int:
+    """Heartbeat cadence to advise agents: env override, else one-third of the TTL."""
     return int(
         os.getenv(
             "REGISTRY_HEARTBEAT_SECONDS",
@@ -74,9 +76,11 @@ def _heartbeat_interval() -> int:
 
 @app.post("/register", response_model=RegisterResponse, dependencies=[Depends(require_auth)])
 async def register(req: RegisterRequest) -> RegisterResponse:
+    """Register/refresh an agent instance; assign an instance_id if the agent omitted one."""
     store = get_registry_store()
     meta = req.meta
     if not meta.endpoint:
+        # Remote agents must advertise where the executor POSTs A2A calls.
         raise HTTPException(status_code=422, detail="meta.endpoint is required for remote agents")
     if not meta.instance_id:
         meta.instance_id = uuid.uuid4().hex
@@ -112,6 +116,7 @@ async def heartbeat(instance_id: str, req: HeartbeatRequest | None = None) -> He
 
 @app.post("/deregister", dependencies=[Depends(require_auth)])
 async def deregister(req: DeregisterRequest) -> dict:
+    """Remove an agent instance (called on graceful agent shutdown)."""
     store = get_registry_store()
     removed = await store.deregister(req.instance_id)
     _log.info("registry.deregister instance_id=%s removed=%s", req.instance_id, removed)
@@ -120,21 +125,25 @@ async def deregister(req: DeregisterRequest) -> dict:
 
 @app.get("/agents", response_model=ListResponse, dependencies=[Depends(require_auth)])
 async def list_agents(agent_id: str | None = None, tag: str | None = None) -> ListResponse:
+    """List live agents, optionally narrowed by ``agent_id`` and/or capability ``tag``."""
     store = get_registry_store()
     agents = await (store.get_agent(agent_id) if agent_id else store.list_active())
     if tag:
+        # Capability-tag filter applied in-process over the live records.
         agents = [m for m in agents if tag in (m.capability_tags or [])]
     return ListResponse(agents=agents)
 
 
 @app.get("/agents/{agent_id}", response_model=ListResponse, dependencies=[Depends(require_auth)])
 async def get_agent(agent_id: str) -> ListResponse:
+    """List the live instances of one agent by ``agent_id``."""
     store = get_registry_store()
     return ListResponse(agents=await store.get_agent(agent_id))
 
 
 @app.get("/health")
 async def health() -> dict:
+    """Unauthenticated liveness probe."""
     return {"status": "ok"}
 
 

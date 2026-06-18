@@ -1,4 +1,5 @@
 """Chat endpoint — submit a message and receive a pipeline response."""
+
 from __future__ import annotations
 
 import itertools
@@ -25,22 +26,28 @@ _conv_counter = itertools.count(1)
 
 
 def _next_conversation_id() -> str:
+    """Return the next sequential conversation ID (Genie_0001, …)."""
     return f"Genie_{next(_conv_counter):04d}"
 
 
 @asynccontextmanager
 async def _null_context() -> AsyncIterator[None]:
+    """No-op async context used when no tracker run is active."""
     yield
 
 
 class ChatRequest(BaseModel):
+    """Inbound chat request body."""
+
     message: str
-    conversation_id: str | None = None   # auto-generates Genie_XXXX when omitted
+    conversation_id: str | None = None  # auto-generates Genie_XXXX when omitted
     user_id: str = "PankajG"
     metadata: dict[str, Any] = {}
 
 
 class ChatResponse(BaseModel):
+    """Outbound chat response with routing/RAG metadata."""
+
     conversation_id: str
     response: str
     request_type: str | None = None
@@ -50,6 +57,7 @@ class ChatResponse(BaseModel):
 
 
 def _get_graph(request: Request) -> Any:
+    """Return the compiled LangGraph from app.state; 500 if not initialised."""
     graph = getattr(request.app.state, "graph", None)
     if graph is None:
         raise GenieError(ErrorCode.INTERNAL_ERROR, "Graph not initialised")
@@ -57,6 +65,7 @@ def _get_graph(request: Request) -> Any:
 
 
 def _get_tracker(request: Request) -> Any:
+    """Return the MLflow tracker from app.state (None if tracking is off)."""
     return getattr(request.app.state, "tracker", None)
 
 
@@ -70,14 +79,17 @@ async def _invoke_with_trace(
     """Run graph.ainvoke wrapped in an MLflow trace span for pipeline visibility."""
     try:
         import mlflow
+
         with mlflow.start_span(name="genie_pipeline") as span:
             span.set_inputs({"message": message, "conversation_id": conversation_id})
             result = await graph.ainvoke(initial_state.model_dump(), config=thread_config)
-            span.set_outputs({
-                "request_type": result.get("request_type") or "",
-                "agents_used": result.get("selected_agents", []),
-                "response_length": len(result.get("final_response") or ""),
-            })
+            span.set_outputs(
+                {
+                    "request_type": result.get("request_type") or "",
+                    "agents_used": result.get("selected_agents", []),
+                    "response_length": len(result.get("final_response") or ""),
+                }
+            )
             return result
     except Exception:
         # If MLflow tracing is unavailable, run without it
@@ -86,6 +98,11 @@ async def _invoke_with_trace(
 
 @router.post("", response_model=ChatResponse, summary="Send a chat message")
 async def chat(body: ChatRequest, request: Request) -> ChatResponse:
+    """Sanitise the message, run it through the pipeline, and return the answer.
+
+    Wraps the graph invocation in an MLflow run (when a tracker is configured)
+    and logs request/response params and metrics around it.
+    """
     graph = _get_graph(request)
     tracker = _get_tracker(request)
 
@@ -107,18 +124,24 @@ async def chat(body: ChatRequest, request: Request) -> ChatResponse:
 
     thread_config = get_thread_config(conversation_id)
 
-    run_ctx = tracker.start_run(
-        run_name=conversation_id,
-        tags={"conversation_id": conversation_id, "user_id": body.user_id},
-    ) if tracker else None
+    run_ctx = (
+        tracker.start_run(
+            run_name=conversation_id,
+            tags={"conversation_id": conversation_id, "user_id": body.user_id},
+        )
+        if tracker
+        else None
+    )
 
-    async with (run_ctx if run_ctx else _null_context()):
+    async with run_ctx if run_ctx else _null_context():
         if run_ctx and tracker:
-            tracker.log_params({
-                "user_id": body.user_id,
-                "conversation_id": conversation_id,
-                "message_length": len(clean_message),
-            })
+            tracker.log_params(
+                {
+                    "user_id": body.user_id,
+                    "conversation_id": conversation_id,
+                    "message_length": len(clean_message),
+                }
+            )
 
         try:
             final_state = await _invoke_with_trace(
@@ -131,15 +154,19 @@ async def chat(body: ChatRequest, request: Request) -> ChatResponse:
             raise HTTPException(status_code=500, detail={"message": str(exc)})
 
         if run_ctx and tracker:
-            tracker.log_params({
-                "request_type": final_state.get("request_type") or "",
-                "agents_used": ",".join(final_state.get("selected_agents", [])),
-                "rag_used": str(bool(final_state.get("rag_context"))),
-            })
-            tracker.log_metrics({
-                "response_length": len(final_state.get("final_response") or ""),
-                "agents_count": len(final_state.get("selected_agents", [])),
-            })
+            tracker.log_params(
+                {
+                    "request_type": final_state.get("request_type") or "",
+                    "agents_used": ",".join(final_state.get("selected_agents", [])),
+                    "rag_used": str(bool(final_state.get("rag_context"))),
+                }
+            )
+            tracker.log_metrics(
+                {
+                    "response_length": len(final_state.get("final_response") or ""),
+                    "agents_count": len(final_state.get("selected_agents", [])),
+                }
+            )
 
     return ChatResponse(
         conversation_id=conversation_id,

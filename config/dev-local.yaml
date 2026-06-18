@@ -10,6 +10,7 @@ enable_rag: false
 enable_tracking: false
 enable_hitl: false
 enable_guards: true
+enable_router: true       # ← toggle the router step here (false → planner-first)
 
 agent_mode: local
 memory_backend: in_memory

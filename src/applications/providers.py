@@ -14,14 +14,17 @@ from applications.weather.agent import WeatherAgent
 
 
 def weather_provider(*, tool_gateway: Any, settings: Any) -> WeatherAgent:
+    """Construct the in-process weather agent (injected deps unused by this static agent)."""
     return WeatherAgent()
 
 
 def outage_provider(*, tool_gateway: Any, settings: Any) -> OutageAgent:
+    """Construct the in-process outage agent (injected deps unused by this static agent)."""
     return OutageAgent()
 
 
 def rag_provider(*, tool_gateway: Any, settings: Any) -> RagAgent:
+    """Construct the in-process RAG agent (injected deps unused by this static agent)."""
     return RagAgent()
 
 

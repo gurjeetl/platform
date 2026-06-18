@@ -1,4 +1,5 @@
 """Factory that returns the correct RAG adapter based on settings.rag_mode."""
+
 from __future__ import annotations
 
 from typing import Any

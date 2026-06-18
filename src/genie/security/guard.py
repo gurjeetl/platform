@@ -28,6 +28,13 @@ _SANITIZING_SCANNERS = {"Anonymize", "Secrets", "Sensitive"}
 
 _DEFAULT_BAN_TOPICS = ["violence", "self-harm", "hate speech", "illegal weapons"]
 
+# Block thresholds for the ML classifiers. Lowered from llm-guard's defaults
+# (BanTopics 0.6, Toxicity 0.5) because neutrally-phrased harmful requests
+# ("describe how to kill...") score right at/under the defaults. 0.5 / 0.45
+# stays above the benign noise floor (benign prompts score ~0.18-0.36).
+_BANTOPICS_THRESHOLD = 0.5
+_TOXICITY_THRESHOLD = 0.45
+
 # Deterministic defense-in-depth against application-layer code/script injection.
 _DEFAULT_INJECTION_PATTERNS = [
     r"(?i)<\s*script\b",
@@ -45,6 +52,21 @@ _DEFAULT_INJECTION_PATTERNS = [
     r"(?:\.\.[\\/]){2,}",
 ]
 
+# Deterministic floor for unambiguous harmful-intent requests that the zero-shot
+# BanTopics model under-scores (e.g. weapon construction scored ~0.28). Regex is
+# threshold-independent; it catches known dangerous phrasings that paraphrase-
+# resistant ML scoring misses. Intentionally specific to limit false positives.
+_DEFAULT_HARMFUL_PATTERNS = [
+    # weapons / explosives construction
+    r"(?i)\b(build|make|construct|assemble|create)\b.{0,40}\b(bomb|pipe\s*bomb|explosive|grenade|ied|detonator|silencer|napalm)\b",
+    r"(?i)\b(synthesi[sz]e|manufacture|produce)\b.{0,40}\b(nerve\s*agent|sarin|ricin|chemical\s*weapon|bioweapon)\b",
+    # lethal violence against a person
+    r"(?i)\bhow\s+to\b.{0,40}\b(kill|murder|poison|strangle|behead)\b.{0,30}\b(a\s+)?(person|someone|somebody|people|him|her|them|child)\b",
+    r"(?i)\bdispose\s+of\b.{0,25}\b(the\s+|a\s+)?(body|corpse|remains)\b",
+    # self-harm / suicide methods
+    r"(?i)\b(kill\s+myself|end\s+my\s+(own\s+)?life|commit\s+suicide|(most|best)\s+\w*\s*(method|way)s?\s+to\s+(die|end))\b",
+]
+
 
 class LLMGuard:
     """Eagerly-loaded local content guard. Constructed once at startup."""
@@ -58,6 +80,10 @@ class LLMGuard:
         parallel: bool = True,
         use_onnx: bool = False,
     ) -> None:
+        """Eagerly build the input/output scanner sets (so a model mis-load fails
+        at startup). ``fail_open`` decides whether a scan error allows or blocks;
+        ``pii`` toggles the PII redaction scanners; ``parallel`` runs the
+        read-only classifiers concurrently."""
         # Plain imports: an ImportError propagates so the caller can fail-closed.
         from llm_guard.input_scanners import (
             Anonymize,
@@ -88,10 +114,10 @@ class LLMGuard:
 
         self._input_scanners: list[Any] = [
             PromptInjection(use_onnx=use_onnx),
-            InputToxicity(use_onnx=use_onnx),
-            BanTopics(topics=topics, use_onnx=use_onnx),
+            InputToxicity(threshold=_TOXICITY_THRESHOLD, use_onnx=use_onnx),
+            BanTopics(topics=topics, threshold=_BANTOPICS_THRESHOLD, use_onnx=use_onnx),
             Regex(
-                patterns=list(_DEFAULT_INJECTION_PATTERNS),
+                patterns=list(_DEFAULT_INJECTION_PATTERNS) + list(_DEFAULT_HARMFUL_PATTERNS),
                 is_blocked=True,
                 match_type="search",
                 redact=False,
@@ -100,8 +126,8 @@ class LLMGuard:
         if self._pii:
             self._input_scanners += [Anonymize(self._vault, use_onnx=use_onnx), Secrets()]
         self._output_scanners = [
-            OutputToxicity(use_onnx=use_onnx),
-            OutputBanTopics(topics=topics, use_onnx=use_onnx),
+            OutputToxicity(threshold=_TOXICITY_THRESHOLD, use_onnx=use_onnx),
+            OutputBanTopics(topics=topics, threshold=_BANTOPICS_THRESHOLD, use_onnx=use_onnx),
         ]
         if self._pii:
             self._output_scanners.append(Sensitive(use_onnx=use_onnx))
@@ -115,6 +141,9 @@ class LLMGuard:
 
     # ── Sync core (CPU-bound; callers wrap in asyncio.to_thread) ────────────────
     def _scan_parallel(self, scanners: list, scan_one: Callable[[Any, str], tuple], base_text: str):
+        """Run read-only classifiers concurrently while the sanitizers run as one
+        ordered chain (each rewrites the text the next sees). Returns the
+        sanitized text plus per-scanner validity and risk-score maps."""
         classifiers = [s for s in scanners if type(s).__name__ not in _SANITIZING_SCANNERS]
         sanitizers = [s for s in scanners if type(s).__name__ in _SANITIZING_SCANNERS]
         valid: dict[str, bool] = {}
@@ -147,12 +176,15 @@ class LLMGuard:
         return sanitized, valid, scores
 
     def _fail_result(self, text: str, stage: str, error: str) -> dict[str, Any]:
+        """Result for a scan that errored: allow (fail_open) or block (fail-closed)."""
         logger.warning("llm_guard_scan_error", stage=stage, error=error)
         if self._fail_open:
             return {"valid": True, "sanitized": text, "findings": [], "scores": {}}
         return {"valid": False, "sanitized": text, "findings": ["scan_error"], "scores": {}}
 
     def scan_input(self, text: str) -> dict[str, Any]:
+        """Scan a user prompt. Returns {valid, sanitized, findings, scores};
+        ``valid`` is False when any BLOCKING input scanner flags the text."""
         if not text:
             return {"valid": True, "sanitized": text, "findings": [], "scores": {}}
         try:
@@ -175,6 +207,9 @@ class LLMGuard:
         }
 
     def scan_output(self, prompt: str, output: str) -> dict[str, Any]:
+        """Scan a generated answer (in the context of its prompt). Returns
+        {valid, sanitized, findings, scores}; ``valid`` is False when any
+        BLOCKING output scanner flags the text."""
         if not output:
             return {"valid": True, "sanitized": output, "findings": [], "scores": {}}
         try:
@@ -209,15 +244,19 @@ class LLMGuard:
         sample = "What is the weather in Paris and tell me about the latest grid outage report?"
         try:
             self.scan_input(sample)
-            self.scan_output(sample, "Here is the weather report and the outage summary you asked for.")
+            self.scan_output(
+                sample, "Here is the weather report and the outage summary you asked for."
+            )
         except Exception as exc:  # noqa: BLE001 — warming is best-effort
             logger.warning("llm_guard_warm_failed", error=str(exc))
 
     # ── Async wrappers used by the graph nodes ──────────────────────────────────
     async def ascan_input(self, text: str) -> dict[str, Any]:
+        """Async ``scan_input`` — offloads the CPU-bound scan to a thread."""
         return await asyncio.to_thread(self.scan_input, text)
 
     async def ascan_output(self, prompt: str, output: str) -> dict[str, Any]:
+        """Async ``scan_output`` — offloads the CPU-bound scan to a thread."""
         return await asyncio.to_thread(self.scan_output, prompt, output)
 
 

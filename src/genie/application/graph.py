@@ -11,6 +11,10 @@ Pipeline (ported from BaseAgentFramework, on Genie's StateGraph)::
 
 The optional input/output content-guard nodes are added by the bootstrap when
 ``enable_guards`` is on (Phase 2); they bookend this graph.
+
+``enable_router`` (default on) toggles the router step. When off, the router node is
+omitted and every request goes straight to the full planner pipeline
+(input_guard → planner → orchestrator → … ) — no fast/chitchat shortcut.
 """
 
 from __future__ import annotations
@@ -48,11 +52,6 @@ NODE_SYNTHESIZER = "synthesizer"
 def _human_approval_node(state: GraphState) -> dict[str, Any]:
     """HITL pause point. LangGraph interrupts BEFORE this node when configured."""
     return {}
-
-
-def _after_input_guard(state: GraphState) -> str:
-    """A blocking input guard short-circuits straight to END with a refusal."""
-    return END if state.guard_block else NODE_ROUTER
 
 
 def _after_router(state: GraphState) -> str:
@@ -108,8 +107,15 @@ def build_graph(
     completion_gate_node = CompletionGateNode(settings=settings)
     synthesizer_node = SynthesizerNode(llm_provider=llm_provider, settings=settings, memory=memory)
 
+    enable_router = getattr(settings, "enable_router", True)
+    # When the router is disabled, the pipeline skips the cheap fast/chitchat triage
+    # and every request goes through the full planner. ``first_node`` is the entry
+    # into the core pipeline (reached from the optional input guard, or directly).
+    first_node = NODE_ROUTER if enable_router else NODE_PLANNER
+
     graph = StateGraph(GraphState)
-    graph.add_node(NODE_ROUTER, router_node)
+    if enable_router:
+        graph.add_node(NODE_ROUTER, router_node)
     graph.add_node(NODE_PLANNER, planner_node)
     graph.add_node(NODE_ORCHESTRATOR, orchestrator_node)
     graph.add_node(NODE_HUMAN_APPROVAL, _human_approval_node)
@@ -122,24 +128,27 @@ def build_graph(
         graph.add_node(NODE_INPUT_GUARD, InputGuardNode(guard))
         graph.add_node(NODE_OUTPUT_GUARD, OutputGuardNode(guard))
         graph.set_entry_point(NODE_INPUT_GUARD)
+        # A blocking input guard short-circuits to END; otherwise enter the pipeline.
         graph.add_conditional_edges(
             NODE_INPUT_GUARD,
-            _after_input_guard,
-            {END: END, NODE_ROUTER: NODE_ROUTER},
+            lambda state: END if state.guard_block else first_node,
+            {END: END, first_node: first_node},
         )
     else:
-        graph.set_entry_point(NODE_ROUTER)
+        graph.set_entry_point(first_node)
 
-    # Router → planner | executor (fast) | synthesizer (chitchat)
-    graph.add_conditional_edges(
-        NODE_ROUTER,
-        _after_router,
-        {
-            NODE_PLANNER: NODE_PLANNER,
-            NODE_EXECUTOR: NODE_EXECUTOR,
-            NODE_SYNTHESIZER: NODE_SYNTHESIZER,
-        },
-    )
+    # Router → planner | executor (fast) | synthesizer (chitchat). Omitted entirely
+    # when the router is disabled — the entry/input-guard points straight at the planner.
+    if enable_router:
+        graph.add_conditional_edges(
+            NODE_ROUTER,
+            _after_router,
+            {
+                NODE_PLANNER: NODE_PLANNER,
+                NODE_EXECUTOR: NODE_EXECUTOR,
+                NODE_SYNTHESIZER: NODE_SYNTHESIZER,
+            },
+        )
     graph.add_edge(NODE_PLANNER, NODE_ORCHESTRATOR)
     graph.add_conditional_edges(
         NODE_ORCHESTRATOR,
@@ -166,5 +175,10 @@ def build_graph(
         interrupt_before_nodes = [NODE_HUMAN_APPROVAL]
 
     compiled = graph.compile(checkpointer=checkpointer, interrupt_before=interrupt_before_nodes)
-    logger.info("graph_built", hitl_enabled=hitl_enabled, interrupt_before=interrupt_before_nodes)
+    logger.info(
+        "graph_built",
+        enable_router=enable_router,
+        hitl_enabled=hitl_enabled,
+        interrupt_before=interrupt_before_nodes,
+    )
     return compiled, checkpointer

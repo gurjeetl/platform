@@ -1,0 +1,18 @@
+app_name: genie-platform
+# Offline profile: in-process agents + built-in MockLLMProvider.
+# No secrets, no network, no external services (MLflow/registry/agents) required.
+# Omitting the `llm_services` block leaves models empty, which makes bootstrap
+# register the mock provider automatically.
+llm_provider: mock
+log_level: INFO
+debug: true
+
+enable_rag: true            # local in-process RAG (seeded at startup)
+enable_tracking: false      # no MLflow server needed
+enable_hitl: false
+enable_guards: false        # skip heavy llm-guard extra
+enable_router: true
+
+agent_mode: local           # in-process weather/outage/rag agents; no registry needed
+memory_backend: in_memory
+rag_mode: local

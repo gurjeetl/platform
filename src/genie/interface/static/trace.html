@@ -163,7 +163,7 @@
   </div>
 
   <script type="text/babel" data-presets="react-classic">
-    const { useState, useEffect, useMemo } = React;
+    const { useState, useEffect, useMemo, useRef } = React;
 
     // Persist the trace thread_id so consecutive traces (and page reloads) stay in
     // the same session — the backend loads prior messages + facts for this thread,
@@ -203,7 +203,7 @@
     // llm-guard defaults in security/llm_guard.py. The guard reports a *normalized*
     // risk score in [-1,1] (calculate_risk_score); invert it back to raw confidence
     // so the "why allowed" readout can show how close each scanner came to blocking.
-    const GUARD_THRESHOLDS = { PromptInjection: 0.92, Toxicity: 0.5, BanTopics: 0.6 };
+    const GUARD_THRESHOLDS = { PromptInjection: 0.92, Toxicity: 0.45, BanTopics: 0.5 };
     function rawConfidence(name, norm) {
       const t = GUARD_THRESHOLDS[name];
       if (t === undefined || norm === undefined || norm === null) return null;
@@ -838,6 +838,8 @@
       const [autoPlay, setAutoPlay] = useState(false);
       const [error, setError] = useState(null);
       const [threadId, setThreadId] = useState(loadThreadId);
+      // Holds the in-flight stream's AbortController so a re-click can cancel it.
+      const abortRef = useRef(null);
 
       useEffect(() => {
         // Poll discovery so live/up-down changes (TTL liveness) show without a reload.
@@ -848,33 +850,74 @@
       }, []);
 
       useEffect(() => {
-        if (!autoPlay || !trace || revealed >= trace.steps.length) return;
+        if (!autoPlay || !trace) return;
+        if (revealed >= trace.steps.length) { setAutoPlay(false); return; }  // reached the end
         const t = setTimeout(() => setRevealed(r => r + 1), 1100);
         return () => clearTimeout(t);
       }, [autoPlay, revealed, trace]);
 
+      // Stream the trace live: each pipeline node (input_guard → router → planner →
+      // …) is rendered the moment the server finishes it, instead of waiting for the
+      // whole run. Reads the NDJSON stream from /chat/trace/stream line-by-line.
       const run = async (text) => {
         const message = (text ?? input).trim();
         if (!message) return;
+        // Cancel any in-flight stream so a re-click doesn't interleave two runs.
+        if (abortRef.current) abortRef.current.abort();
+        const ac = new AbortController();
+        abortRef.current = ac;
         setLoading(true);
         setError(null);
-        setTrace(null);
+        setTrace({ user_input: message, run_id: '', steps: [], final: null, session_loaded: null });
         setRevealed(0);
         setAutoPlay(false);
+        let firstStep = true;
         try {
-          const res = await fetch('/api/v1/chat/trace', {
+          const res = await fetch('/api/v1/chat/trace/stream', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({message, thread_id: threadId}),
+            signal: ac.signal,
           });
-          const data = await res.json();
-          if (data.error) { setError(data.error); return; }
-          setTrace(data);
-          setRevealed(1);
+          if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = '';
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            let nl;
+            while ((nl = buf.indexOf('\n')) >= 0) {
+              const line = buf.slice(0, nl).trim();
+              buf = buf.slice(nl + 1);
+              if (!line) continue;
+              let msg;
+              try { msg = JSON.parse(line); } catch (_) { continue; }
+              if (msg.type === 'meta') {
+                setTrace(t => ({ ...t, run_id: msg.run_id, user_input: msg.user_input }));
+              } else if (msg.type === 'step') {
+                const step = { node: msg.node, elapsed_ms: msg.elapsed_ms, update: msg.update };
+                setTrace(t => ({ ...t, steps: [...t.steps, step] }));
+                // Reveal ONLY the first step (input_guard); the user advances the rest
+                // with Step ▶. Later steps keep streaming into the array in the
+                // background so they're ready by the time the user clicks through.
+                setRevealed(r => (r === 0 ? 1 : r));
+                // Stop the Trace button's loader the moment step 1 is shown — the rest
+                // keeps streaming in the background.
+                if (firstStep) { firstStep = false; setLoading(false); }
+              } else if (msg.type === 'done') {
+                setTrace(t => ({ ...t, final: msg.final, session_loaded: msg.session_loaded }));
+              } else if (msg.type === 'error') {
+                setError(msg.error);
+              }
+            }
+          }
         } catch (e) {
-          setError(String(e));
+          if (e.name !== 'AbortError') setError(String(e));
         } finally {
-          setLoading(false);
+          // Only the current (non-replaced) run clears loading + the ref.
+          if (abortRef.current === ac) { setLoading(false); abortRef.current = null; }
         }
       };
 
@@ -947,7 +990,7 @@
                 <button onClick={() => setRevealed(1)} disabled={revealed <= 1}>⏮ Restart</button>
                 <button className="primary" onClick={() => setRevealed(r => Math.min(r + 1, trace.steps.length))} disabled={revealed >= trace.steps.length}>Step ▶</button>
                 <button onClick={() => setRevealed(trace.steps.length)} disabled={revealed >= trace.steps.length}>⏭ Reveal all</button>
-                <button onClick={() => setAutoPlay(p => !p)} disabled={revealed >= trace.steps.length}>{autoPlay ? '⏸ Pause' : '▶ Auto-play'}</button>
+                <button onClick={() => { if (revealed >= trace.steps.length) { setRevealed(1); setAutoPlay(true); } else { setAutoPlay(p => !p); } }} disabled={!trace || trace.steps.length <= 1}>{autoPlay ? '⏸ Pause' : (revealed >= trace.steps.length ? '↻ Replay' : '▶ Auto-play')}</button>
                 <span className="progress">Step {Math.min(revealed, trace.steps.length)} / {trace.steps.length}</span>
               </div>
 

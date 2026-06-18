@@ -36,6 +36,7 @@ _CLARIFICATION = "I can help with weather or grid outages. Could you tell me wha
 
 
 def _last_user_message(state: GraphState) -> str:
+    """Return the most recent user message text — the request being answered."""
     for m in reversed(state.messages):
         if m.role == "user":
             return m.content
@@ -43,12 +44,15 @@ def _last_user_message(state: GraphState) -> str:
 
 
 class SynthesizerNode:
+    """Composes the final user-facing answer from the blackboard (with fast paths)."""
+
     def __init__(self, llm_provider: Any, settings: Any, memory: Any | None = None) -> None:
         self._llm = llm_provider
         self._settings = settings
         self._memory = memory
 
     async def __call__(self, state: GraphState) -> dict[str, Any]:
+        """Synthesize the answer and record its length on the trace span."""
         with node_span("synthesizer") as span:
             result = await self._synthesize(state)
             with contextlib.suppress(Exception):
@@ -58,6 +62,7 @@ class SynthesizerNode:
 
     @staticmethod
     def _emit(state: GraphState, text: str, view: dict | None = None) -> dict[str, Any]:
+        """Finalize: append the assistant turn, set final_response + is_complete."""
         messages = list(state.messages) + [Message(role="assistant", content=text)]
         out: dict[str, Any] = {"final_response": text, "messages": messages, "is_complete": True}
         if view:
@@ -68,6 +73,7 @@ class SynthesizerNode:
     def _render_blackboard(
         blackboard: dict[str, dict], per_entry_cap: int = 2500, total_cap: int = 8000
     ) -> str:
+        """Serialize the blackboard to a size-capped JSON string for the LLM prompt."""
         parts: list[str] = []
         for tid, entry in blackboard.items():
             if not isinstance(entry, dict):
@@ -82,6 +88,7 @@ class SynthesizerNode:
         return ("{" + ", ".join(parts) + "}")[:total_cap]
 
     async def _synthesize(self, state: GraphState) -> dict[str, Any]:
+        """Apply the fast paths, else LLM-merge the blackboard into one prose answer."""
         blackboard: dict[str, dict] = state.blackboard or {}
         plan = Plan(**(state.plan or {}))
 

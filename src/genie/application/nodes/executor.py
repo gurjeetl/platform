@@ -31,6 +31,7 @@ _REF_RE = re.compile(r"\$\{([^}]+)\}")
 
 
 def _last_user_message(state: GraphState) -> str:
+    """Return the most recent user message text (the instruction agents receive)."""
     for m in reversed(state.messages):
         if m.role == "user":
             return m.content
@@ -38,6 +39,8 @@ def _last_user_message(state: GraphState) -> str:
 
 
 class ExecutorNode:
+    """Runs the orchestrator's waves against the registry, writing to the blackboard."""
+
     def __init__(
         self,
         agent_registry: AgentRegistry,
@@ -51,6 +54,7 @@ class ExecutorNode:
         self._redis = redis_store
 
     async def __call__(self, state: GraphState) -> dict[str, Any]:
+        """Execute all waves and emit the blackboard plus API-compat tool records."""
         with node_span("executor") as span:
             result = await self._execute(state)
             with contextlib.suppress(Exception):
@@ -67,6 +71,7 @@ class ExecutorNode:
             return result
 
     async def _execute(self, state: GraphState) -> dict[str, Any]:
+        """Run waves in order; tasks within a wave go concurrently, waves serially."""
         plan = Plan(**(state.plan or {}))
         by_id = plan.by_id()
         bb = Blackboard(
@@ -131,6 +136,7 @@ class ExecutorNode:
 
     # ── Runtime data-passing: resolve ${task_id.path} arg references ────────────
     def _lookup_ref(self, ref: str, bb: Blackboard) -> Any:
+        """Walk a dotted ``task_id.path`` into the blackboard (list indices allowed)."""
         parts = ref.strip().split(".")
         cur: Any = bb.get(parts[0])
         for p in parts[1:]:
@@ -146,12 +152,19 @@ class ExecutorNode:
         return cur
 
     def _resolve_args(self, value: Any, bb: Blackboard) -> Any:
+        """Recursively substitute ``${...}`` references in args with blackboard values.
+
+        A whole-string match (``"${t1.view}"``) is replaced by the raw value so types
+        survive; an embedded reference (``"id=${t1.id}"``) is stringified inline.
+        Unresolved references are left verbatim.
+        """
         if isinstance(value, dict):
             return {k: self._resolve_args(v, bb) for k, v in value.items()}
         if isinstance(value, list):
             return [self._resolve_args(v, bb) for v in value]
         if not isinstance(value, str):
             return value
+        # Whole-string reference → return the resolved value untouched (preserves type).
         full = _REF_RE.fullmatch(value.strip())
         if full:
             resolved = self._lookup_ref(full.group(1), bb)
@@ -166,6 +179,12 @@ class ExecutorNode:
     async def _run_task(
         self, task: Subtask, wave_idx: int, bb: Blackboard, state: GraphState
     ) -> None:
+        """Dispatch one subtask through the registry with SLA timeout + one retry.
+
+        Resolves arg references, builds the ``AgentTask``, and writes the result (or
+        an error entry) to the blackboard. Never raises — failures are captured so the
+        gate can decide whether to re-plan.
+        """
         agent = self._registry.get(task.agent_id)
         if agent is None:
             await bb.write_error(task.id, f"agent_id '{task.agent_id}' not in registry")

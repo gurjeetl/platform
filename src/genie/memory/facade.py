@@ -33,6 +33,12 @@ _FACTS_PROMPT = (
 
 
 class MemoryFacade:
+    """Best-effort async memory API over already-built, optional backends.
+
+    Each backend may be None or disabled; methods degrade to benign values so a
+    turn never crashes on a memory error.
+    """
+
     def __init__(
         self,
         mongo: Any = None,
@@ -102,6 +108,7 @@ class MemoryFacade:
     async def _commit(
         self, state: Any, blackboard: dict, text: str, conversation_id: str, run_id: str
     ) -> None:
+        """Persist each non-error blackboard entry as a durable per-task commit."""
         if self._mongo is None or not getattr(self._mongo, "enabled", False):
             return
         plan = getattr(state, "plan", None) or {}
@@ -132,6 +139,7 @@ class MemoryFacade:
     async def _extract_and_store_facts(
         self, state: Any, blackboard: dict, text: str, conversation_id: str, run_id: str
     ) -> None:
+        """LLM-extract durable facts from a complete answer and upsert each."""
         # Gate: only extract from a real, complete answer.
         if getattr(state, "partial", False) or not (text or "").strip():
             return
@@ -179,6 +187,8 @@ class MemoryFacade:
     def _render_blackboard(
         blackboard: dict, per_entry_cap: int = 2500, total_cap: int = 8000
     ) -> str:
+        """Render the blackboard as compact JSON for the facts prompt, capping
+        each entry and the total length so the prompt stays bounded."""
         parts: list[str] = []
         for tid, entry in (blackboard or {}).items():
             if not isinstance(entry, dict):

@@ -3,6 +3,7 @@
 Other microservices push documents here; the platform indexes them so the
 chat pipeline can retrieve relevant context for user queries.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -19,7 +20,10 @@ logger = get_logger(__name__)
 
 # ── Request / response models ─────────────────────────────────────────────────
 
+
 class IngestDocumentRequest(BaseModel):
+    """Body for ingesting a single document into the RAG index."""
+
     title: str
     content: str
     source: str = "manual"
@@ -27,6 +31,8 @@ class IngestDocumentRequest(BaseModel):
 
 
 class IngestDocumentResponse(BaseModel):
+    """Result of an ingest call, including the chunk count produced."""
+
     document_id: str
     title: str
     status: str
@@ -34,6 +40,8 @@ class IngestDocumentResponse(BaseModel):
 
 
 class RagStatsResponse(BaseModel):
+    """Snapshot of the RAG index: adapter type, chunk count, enabled flag."""
+
     adapter: str
     indexed_chunks: int
     enabled: bool
@@ -41,7 +49,9 @@ class RagStatsResponse(BaseModel):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _get_adapter(request: Request) -> Any:
+    """Return the RAG adapter from app.state; 503 when RAG is disabled."""
     adapter = getattr(request.app.state, "rag_adapter", None)
     if adapter is None:
         raise HTTPException(
@@ -52,6 +62,7 @@ def _get_adapter(request: Request) -> Any:
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
 
 @router.post("/ingest", response_model=IngestDocumentResponse, summary="Ingest a document")
 async def ingest_document(body: IngestDocumentRequest, request: Request) -> IngestDocumentResponse:

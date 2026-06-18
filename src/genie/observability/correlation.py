@@ -1,4 +1,5 @@
 """Correlation ID propagation via Python contextvars."""
+
 from __future__ import annotations
 
 import uuid
@@ -32,21 +33,22 @@ class CorrelationMiddleware:
     """ASGI middleware that propagates X-Correlation-ID through the request context."""
 
     def __init__(self, app: ASGIApp) -> None:
+        """Wrap the downstream ASGI *app*."""
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Read/generate a correlation ID per HTTP request and echo it on the response."""
         if scope["type"] == "http":
             headers = Headers(scope=scope)
             cid = headers.get("X-Correlation-ID") or new_correlation_id()
             set_correlation_id(cid)
 
             async def send_with_correlation(message: dict) -> None:
+                # Append the X-Correlation-ID header on the response-start message.
                 if message["type"] == "http.response.start":
                     # Inject the correlation ID into response headers
                     existing_headers = list(message.get("headers", []))
-                    existing_headers.append(
-                        (b"x-correlation-id", cid.encode("latin-1"))
-                    )
+                    existing_headers.append((b"x-correlation-id", cid.encode("latin-1")))
                     message = {**message, "headers": existing_headers}
                 await send(message)
 

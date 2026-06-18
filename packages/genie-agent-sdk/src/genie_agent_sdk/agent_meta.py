@@ -55,11 +55,14 @@ class AgentMeta(BaseModel):
 
     @model_validator(mode="after")
     def _ensure_skills(self) -> "AgentMeta":
+        """Guarantee at least one skill (derived from tags + I/O) so the Agent Card
+        and registry record always advertise a skill."""
         if not self.skills:
             self.skills = [self._derived_skill()]
         return self
 
     def _derived_skill(self) -> Skill:
+        """A single skill summarizing this agent: tags + an input-shape note."""
         required = [name for name, spec in self.input_schema.items() if spec.required]
         optional = [name for name, spec in self.input_schema.items() if not spec.required]
         parts = []

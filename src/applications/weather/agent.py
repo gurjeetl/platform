@@ -22,6 +22,8 @@ _WEATHER = {
 
 
 class WeatherAgent:
+    """In-process weather agent: maps a city name to a static weather report."""
+
     agent_id = "weather"
     name = "weather"
     description = "Reports current weather conditions for a named city."
@@ -30,15 +32,19 @@ class WeatherAgent:
     enabled = True
 
     def enable(self) -> None:
+        """Mark this agent as available for routing."""
         self.enabled = True
 
     def disable(self) -> None:
+        """Mark this agent as unavailable for routing."""
         self.enabled = False
 
     async def health_check(self) -> str:
+        """Report liveness; this static agent is always ``healthy``."""
         return "healthy"
 
     def get_info(self) -> AgentInfo:
+        """Return the agent's capability/schema descriptor for discovery + routing."""
         return AgentInfo(
             agent_id=self.agent_id,
             name=self.name,
@@ -62,6 +68,7 @@ class WeatherAgent:
         )
 
     async def execute(self, task: AgentTask, context: dict[str, Any]) -> AgentResult:
+        """Look up the report for ``args.location`` and return it as the task result."""
         loc = str((task.context or {}).get("args", {}).get("location", "")).lower().strip()
         report = _WEATHER.get(loc, f"No weather data available for '{loc or 'that location'}'.")
         return AgentResult(

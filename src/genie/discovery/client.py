@@ -25,6 +25,7 @@ class RegistryUnavailable(RuntimeError):
 
 class DiscoveryClient:
     def __init__(self, settings: Any) -> None:
+        """Read registry URL, TTL/timeout, stale policy, and auth from settings."""
         self._base_url = str(getattr(settings, "registry_url", "http://127.0.0.1:2005")).rstrip("/")
         self._cache_ttl = float(getattr(settings, "registry_cache_ttl_seconds", 5.0))
         self._timeout = float(getattr(settings, "registry_timeout_seconds", 3.0))
@@ -35,12 +36,18 @@ class DiscoveryClient:
         self._cache_at = 0.0
 
     async def list_active(self, *, force_refresh: bool = False) -> list[AgentMeta]:
+        """Return active agents, served from the TTL cache until it expires.
+
+        On a refresh failure the last good list is returned when ``serve_stale`` is
+        set; otherwise the ``RegistryUnavailable`` propagates.
+        """
         fresh = self._cache is not None and (time.monotonic() - self._cache_at) < self._cache_ttl
         if fresh and not force_refresh:
             return self._cache
         try:
             agents = await self._fetch_agents()
         except RegistryUnavailable:
+            # Degrade gracefully: keep serving the last successful snapshot.
             if self._serve_stale and self._cache is not None:
                 logger.warning("discovery_serving_stale")
                 return self._cache
@@ -49,9 +56,11 @@ class DiscoveryClient:
         return agents
 
     async def get(self, agent_id: str) -> AgentMeta | None:
+        """Return the active agent with ``agent_id``, or None if not discovered."""
         return next((m for m in await self.list_active() if m.agent_id == agent_id), None)
 
     async def _fetch_agents(self) -> list[AgentMeta]:
+        """GET ``/agents``, parse records (skipping bad ones), keep only active ones."""
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.get(f"{self._base_url}/agents", headers=self._headers)

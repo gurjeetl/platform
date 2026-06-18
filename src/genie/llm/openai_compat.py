@@ -1,4 +1,5 @@
 """OpenAI-compatible LLM provider — works with any vLLM / Ollama / custom endpoint."""
+
 from __future__ import annotations
 
 import asyncio
@@ -29,6 +30,7 @@ class OpenAICompatibleLLMProvider:
         provider_name: str = "openai_compat",
         max_token_limit: int = 4096,
     ) -> None:
+        # Import lazily so the openai SDK is only required when this provider is used.
         from openai import AsyncOpenAI
 
         self._model = model_name
@@ -47,9 +49,11 @@ class OpenAICompatibleLLMProvider:
 
     @property
     def name(self) -> str:
+        """Provider name supplied at construction (used for registry/log lookup)."""
         return self._provider_name
 
     def _to_openai_messages(self, messages: list[Message]) -> list[dict[str, Any]]:
+        """Convert internal ``Message`` objects to the OpenAI chat dict shape."""
         return [{"role": m.role, "content": m.content} for m in messages]
 
     async def complete(
@@ -60,6 +64,11 @@ class OpenAICompatibleLLMProvider:
         temperature: float = 0.7,
         **kwargs: Any,
     ) -> LLMResponse:
+        """Call the chat-completions endpoint and return the full response.
+
+        Caps ``max_tokens`` at the provider's configured limit and degrades to a
+        placeholder response (rather than raising) when the server is unreachable.
+        """
         capped = min(max_tokens, self._max_token_limit)
         try:
             response = await self._client.chat.completions.create(
@@ -105,6 +114,7 @@ class OpenAICompatibleLLMProvider:
         temperature: float = 0.7,
         **kwargs: Any,
     ) -> AsyncIterator[str]:
+        """Stream completion deltas; yields a placeholder chunk on failure."""
         capped = min(max_tokens, self._max_token_limit)
         try:
             async with self._client.chat.completions.stream(

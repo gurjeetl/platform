@@ -1,0 +1,27 @@
+app_name: genie-platform
+# Real-LLM profile WITH content guards, for the PyRIT red-team run.
+# Uses OpenAI gpt-4o-mini (OPENAI_API_KEY read from the environment) so the
+# router/planner actually route to agents, and guards bracket the pipeline.
+llm_provider: openai
+log_level: INFO
+debug: true
+
+enable_rag: true
+enable_tracking: false
+enable_hitl: false
+enable_guards: true
+enable_router: true
+
+agent_mode: local
+memory_backend: in_memory
+rag_mode: local
+
+guard_pii: true
+guard_fail_open: false
+
+llm_services:
+  models:
+    openai:
+      url: "https://api.openai.com/v1"
+      model_name: "gpt-4o-mini"
+      max_token_limit: 16384

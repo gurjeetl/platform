@@ -24,6 +24,7 @@ _REFUSAL = (
 
 
 def _last_user_index(state: GraphState) -> int:
+    """Index of the most recent user message (so we can scan/replace it in place)."""
     for i in range(len(state.messages) - 1, -1, -1):
         if state.messages[i].role == "user":
             return i
@@ -37,6 +38,7 @@ class InputGuardNode:
         self._guard = guard
 
     async def __call__(self, state: GraphState) -> dict[str, Any]:
+        """Scan the prompt; on a block set a refusal + short-circuit, else sanitize."""
         with node_span("input_guard"):
             idx = _last_user_index(state)
             text = state.messages[idx].content if idx >= 0 else ""
@@ -88,6 +90,7 @@ class OutputGuardNode:
         self._guard = guard
 
     async def __call__(self, state: GraphState) -> dict[str, Any]:
+        """Scan the final answer; replace with a refusal if blocked, else sanitize."""
         with node_span("output_guard"):
             answer = state.final_response or ""
             if not answer:

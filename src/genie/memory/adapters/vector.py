@@ -40,6 +40,8 @@ class VectorStore:
         embed_model: str = "text-embedding-3-small",
         embed_dim: int = _DEFAULT_DIM,
     ) -> None:
+        """Connect a MilvusClient; degrade to disabled when unconfigured or when
+        pymilvus is missing/unreachable."""
         # milvus_uri may be a remote http(s) endpoint; milvus_db_path is a local
         # Milvus Lite file (no server needed). Prefer the explicit remote uri.
         self._uri = milvus_uri or milvus_db_path
@@ -71,6 +73,7 @@ class VectorStore:
 
     @property
     def enabled(self) -> bool:
+        """True when a Milvus client connected (otherwise every method no-ops)."""
         return self._client is not None
 
     # ── embeddings (OpenAI, installed) ────────────────────────────────────────
@@ -91,6 +94,8 @@ class VectorStore:
             return None
 
     def _ensure_collection(self) -> None:
+        """Create + load the collection (with a COSINE vector index) on first use;
+        a no-op once it already exists."""
         if not self._client:
             return
         try:
@@ -129,6 +134,7 @@ class VectorStore:
         return await asyncio.to_thread(self._search_sync, thread_id, query, limit)
 
     def _search_sync(self, thread_id: str, query: str, limit: int) -> list[dict]:
+        """Blocking embed + Milvus search (offloaded by ``search``)."""
         vector = self._embed(query)
         if vector is None:
             return []
@@ -158,6 +164,7 @@ class VectorStore:
         return await asyncio.to_thread(self._add_sync, thread_id, text)
 
     def _add_sync(self, thread_id: str, text: str) -> dict[str, Any]:
+        """Blocking embed + dedup-check + insert (offloaded by ``add``)."""
         self._ensure_collection()
         vector = self._embed(text)
         if vector is None:
@@ -201,6 +208,7 @@ class VectorStore:
         return float(hits[0].get("distance", 0.0))
 
     async def aclose(self) -> None:
+        """Close the Milvus client (offloaded; best-effort shutdown hook)."""
         if self._client is not None:
             try:
                 await asyncio.to_thread(self._client.close)

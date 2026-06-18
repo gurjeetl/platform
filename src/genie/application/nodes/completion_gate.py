@@ -20,11 +20,15 @@ logger = get_logger(__name__)
 
 
 class CompletionGateNode:
+    """Gate between Executor and Synthesizer: replan on gaps/errors, else synthesize."""
+
     def __init__(self, settings: Any | None = None) -> None:
         self._settings = settings
+        # Re-plan budget; per-run overrides may arrive via state.metadata["max_replans"].
         self._max_replans = int(getattr(settings, "max_replans", 3)) if settings else 3
 
     async def __call__(self, state: GraphState) -> dict[str, Any]:
+        """Inspect the blackboard against the plan and set ``metadata['gate_action']``."""
         with node_span("completion_gate") as span:
             plan = Plan(**(state.plan or {}))
             blackboard = state.blackboard or {}
@@ -41,6 +45,8 @@ class CompletionGateNode:
 
             budget_left = replan_count < max_replans
             empty_plan = len(plan.subtasks) == 0
+            # Replan only if there is a real plan with gaps/errors AND budget remains;
+            # an empty plan has nothing to recover, so it always synthesizes.
             should_replan = (not empty_plan) and (not all_present or partial) and budget_left
 
             with contextlib.suppress(Exception):

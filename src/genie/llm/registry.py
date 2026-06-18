@@ -1,4 +1,5 @@
 """LLM provider registry — register and resolve named providers."""
+
 from __future__ import annotations
 
 from genie.llm.base import LLMProvider

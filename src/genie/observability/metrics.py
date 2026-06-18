@@ -4,6 +4,7 @@ Designed so that a Prometheus or OpenTelemetry backend can replace it by
 swapping out the MetricsRecorder implementation and re-assigning the module-
 level ``_recorder`` singleton.
 """
+
 from __future__ import annotations
 
 from collections import defaultdict
@@ -22,6 +23,7 @@ class MetricsRecorder:
     """Records counters and histograms in memory."""
 
     def __init__(self) -> None:
+        """Initialise empty counter and histogram tables."""
         self._counters: dict[str, float] = defaultdict(float)
         self._histograms: dict[str, list[float]] = defaultdict(list)
 

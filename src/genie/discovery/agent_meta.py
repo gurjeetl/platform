@@ -55,11 +55,13 @@ class AgentMeta(BaseModel):
 
     @model_validator(mode="after")
     def _ensure_skills(self) -> "AgentMeta":
+        """Guarantee at least one advertised skill by synthesizing one from the schema."""
         if not self.skills:
             self.skills = [self._derived_skill()]
         return self
 
     def _derived_skill(self) -> Skill:
+        """Build a single fallback ``Skill`` describing the agent's required/optional inputs."""
         required = [name for name, spec in self.input_schema.items() if spec.required]
         optional = [name for name, spec in self.input_schema.items() if not spec.required]
         parts = []
@@ -76,6 +78,7 @@ class AgentMeta(BaseModel):
         )
 
     def validate_args(self, args: dict) -> tuple[bool, str]:
+        """Check that every required input is present and non-empty. Returns (ok, error)."""
         for name, spec in self.input_schema.items():
             if spec.required and (name not in args or args[name] in (None, "")):
                 return False, f"missing required input '{name}'"

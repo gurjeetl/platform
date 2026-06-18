@@ -5,7 +5,6 @@ is self-contained. Observability hooks are replaced with stdlib logging.
 """
 from __future__ import annotations
 
-import logging
 import os
 from dataclasses import dataclass, field
 from enum import Enum
@@ -13,13 +12,14 @@ from enum import Enum
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
+from genie_agent_sdk.llm_client import Observer, _StdlibObserver
 from genie_agent_sdk.permissions import filter_tools_by_permission
-
-_log = logging.getLogger("genie_agent_sdk.mcp")
 
 
 # --- MCP config models ------------------------------------------------------
 class MCPTransport(str, Enum):
+    """Supported MCP wire transports."""
+
     SSE = "sse"
     STDIO = "stdio"
     WEBSOCKET = "websocket"
@@ -28,6 +28,8 @@ class MCPTransport(str, Enum):
 
 @dataclass
 class MCPServerConfig:
+    """Connection settings for one MCP server (url, transport, auth headers)."""
+
     name: str
     url: str
     transport: MCPTransport = MCPTransport.SSE
@@ -39,6 +41,8 @@ class MCPServerConfig:
 
 @dataclass
 class MCPAgentConfig:
+    """An agent's MCP configuration: the set of servers it may connect to."""
+
     servers: list[MCPServerConfig]
     default_timeout: int = 30
     allowed_roles: list[str] = field(default_factory=list)
@@ -47,6 +51,10 @@ class MCPAgentConfig:
 # --- Client -----------------------------------------------------------------
 class MCPClient:
     """Builds MCP configuration from env, loads tools, and unwraps results."""
+
+    def __init__(self, observer: Observer | None = None) -> None:
+        """Store the event sink; default to the stdlib-logging observer."""
+        self._observer = observer or _StdlibObserver()
 
     def build_config_from_env(self) -> MCPAgentConfig | None:
         """Construct an MCPAgentConfig from environment variables.
@@ -62,7 +70,9 @@ class MCPClient:
         try:
             transport = MCPTransport(transport_str)
         except ValueError:
-            _log.warning("mcp.unknown_transport transport=%s fallback=sse", transport_str)
+            self._observer.log(
+                "warning", "mcp.unknown_transport", transport=transport_str, fallback="sse"
+            )
             transport = MCPTransport.SSE
 
         token = os.getenv("MCP_AUTH_TOKEN", "")
@@ -80,6 +90,11 @@ class MCPClient:
         config: MCPAgentConfig,
         tool_names: list[str] | None,
     ) -> list[BaseTool]:
+        """Connect to the configured servers and return the permitted tools.
+
+        When ``tool_names`` is given, only those tools are kept; results are then
+        passed through the permission filter.
+        """
         server_map = {
             s.name: {
                 "transport": s.transport.value,

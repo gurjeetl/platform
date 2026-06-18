@@ -50,11 +50,13 @@ _log = logging.getLogger("genie_agent_sdk.server")
 
 # --- Config helpers ---------------------------------------------------------
 def _registry_headers() -> dict:
+    """Bearer auth header for registry calls, or empty when no token is configured."""
     token = os.getenv("REGISTRY_AUTH_TOKEN")
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
 def _require_a2a_auth(authorization: str | None = Header(None)) -> None:
+    """Guard the /a2a endpoint with a bearer token. No-op when unset (local dev)."""
     token = os.getenv("AGENT_INVOKE_TOKEN")
     if not token:
         return
@@ -83,6 +85,7 @@ async def _register(client: httpx.AsyncClient, registry_url: str, meta: AgentMet
 async def _heartbeat_loop(
     client: httpx.AsyncClient, registry_url: str, meta: AgentMeta, interval: int
 ) -> None:
+    """Heartbeat the registry on an interval; re-register if it forgot us or failed."""
     while True:
         await asyncio.sleep(interval)
         try:
@@ -117,6 +120,7 @@ def build_agent_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        """Register on startup, run the heartbeat loop, deregister on shutdown."""
         client = httpx.AsyncClient(timeout=float(os.getenv("REGISTRY_TIMEOUT_S", "3")))
         interval = await _register(client, registry_url, meta) or default_heartbeat
         hb_task = asyncio.create_task(_heartbeat_loop(client, registry_url, meta, interval))
@@ -138,10 +142,12 @@ def build_agent_app(
 
     @app.get("/health")
     async def health() -> dict:
+        """Liveness probe reporting this instance's identity."""
         return {"status": "ok", "agent_id": meta.agent_id, "instance_id": meta.instance_id}
 
     @app.get("/.well-known/agent.json")
     async def agent_card() -> dict:
+        """Serve the A2A Agent Card derived from this agent's meta."""
         return to_agent_card(meta).model_dump(mode="json")
 
     @app.post("/a2a", dependencies=[Depends(_require_a2a_auth)])

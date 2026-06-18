@@ -1,4 +1,5 @@
 """Agent management endpoints — list, inspect, enable/disable, unregister, and register."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -14,6 +15,7 @@ router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 
 
 def _get_registry(request: Request) -> Any:
+    """Return the app's AgentRegistry from app.state; 500 if not initialised."""
     registry = getattr(request.app.state, "agent_registry", None)
     if registry is None:
         raise GenieError(ErrorCode.INTERNAL_ERROR, "Agent registry not initialised")
@@ -22,13 +24,16 @@ def _get_registry(request: Request) -> Any:
 
 # ── Read endpoints ────────────────────────────────────────────────────────────
 
+
 @router.get("", response_model=list[AgentInfo], summary="List all registered agents")
 async def list_agents(request: Request) -> list[AgentInfo]:
+    """List the info cards of all registered agents."""
     return _get_registry(request).list_all()
 
 
 @router.get("/{agent_id}", response_model=AgentInfo, summary="Get agent details and health")
 async def get_agent(agent_id: str, request: Request) -> AgentInfo:
+    """Return one agent's info card with live health from the registry cache."""
     registry = _get_registry(request)
     agent = registry.get(agent_id)
     if agent is None:
@@ -40,6 +45,7 @@ async def get_agent(agent_id: str, request: Request) -> AgentInfo:
 
 
 # ── Lifecycle management ──────────────────────────────────────────────────────
+
 
 @router.post("/{agent_id}/enable", summary="Enable a disabled agent")
 async def enable_agent(agent_id: str, request: Request) -> JSONResponse:
@@ -68,6 +74,7 @@ async def unregister_agent(agent_id: str, request: Request) -> JSONResponse:
 
 # ── Dynamic registration ──────────────────────────────────────────────────────
 
+
 class _ExternalAgentProxy:
     """Lightweight BaseAgent implementation backed by an AgentInfo card.
 
@@ -78,46 +85,58 @@ class _ExternalAgentProxy:
     """
 
     def __init__(self, info: AgentInfo) -> None:
+        """Wrap an AgentInfo card; seed enabled state from the card."""
         self._info = info
         self._enabled = info.enabled
 
     @property
     def agent_id(self) -> str:
+        """Agent identifier from the card."""
         return self._info.agent_id
 
     @property
     def name(self) -> str:
+        """Display name from the card."""
         return self._info.name
 
     @property
     def description(self) -> str:
+        """Description from the card."""
         return self._info.description
 
     @property
     def capabilities(self) -> list[str]:
+        """Capability strings from the card (used for Planner matching)."""
         return self._info.capabilities
 
     @property
     def version(self) -> str:
+        """Version string from the card."""
         return self._info.version
 
     @property
     def enabled(self) -> bool:
+        """Whether the proxy is currently enabled."""
         return self._enabled
 
     def enable(self) -> None:
+        """Mark the proxy enabled."""
         self._enabled = True
 
     def disable(self) -> None:
+        """Mark the proxy disabled."""
         self._enabled = False
 
     async def health_check(self) -> str:
+        """Always reports healthy — the proxy has no real backend to probe."""
         return "healthy"
 
     def get_info(self) -> AgentInfo:
+        """Return the card with the current enabled state applied."""
         return self._info.model_copy(update={"enabled": self._enabled})
 
     async def execute(self, task: AgentTask, context: dict) -> AgentResult:
+        """Not implemented — a dynamically-registered card has no local executor."""
         raise NotImplementedError(
             f"Agent '{self.agent_id}' was dynamically registered from an AgentInfo card "
             "and has no local execute() implementation. "

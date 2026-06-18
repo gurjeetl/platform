@@ -40,6 +40,7 @@ _DEFAULT_MULTI_INTENT_PATTERN = r"(?i)\b(also|as well as|and also|additionally|m
 
 
 def _last_user_message(state: GraphState) -> str:
+    """Return the most recent user message text — the request being triaged."""
     for m in reversed(state.messages):
         if m.role == "user":
             return m.content
@@ -47,14 +48,18 @@ def _last_user_message(state: GraphState) -> str:
 
 
 class RouterNode:
+    """Cheap intent triage that picks fast/chitchat/plan, failing open to plan."""
+
     def __init__(self, llm_provider: Any, agent_registry: AgentRegistry, settings: Any) -> None:
         self._llm = llm_provider
         self._registry = agent_registry
         self._settings = settings
+        # A "fast" match below this confidence is downgraded to the safe "plan" route.
         self._min_confidence = float(getattr(settings, "router_min_confidence", 0.7))
         self._multi_intent_re = re.compile(_DEFAULT_MULTI_INTENT_PATTERN)
 
     async def __call__(self, state: GraphState) -> dict[str, Any]:
+        """Choose a route and record it on the trace span."""
         with node_span("router") as span:
             with contextlib.suppress(Exception):
                 if span is not None:
@@ -66,9 +71,11 @@ class RouterNode:
             return result
 
     def _agents(self) -> list:
+        """The currently enabled agents the router can match a fast route against."""
         return [a for a in self._registry.list_all() if a.enabled]
 
     def _build_system_prompt(self, agents: list) -> str:
+        """Build the routing prompt: the three routes plus the live capability menu."""
         menu = render_capability_menu(agents)
         return (
             "You are a fast intent ROUTER sitting in front of a planner. Pick the "
@@ -91,6 +98,7 @@ class RouterNode:
         )
 
     async def _route(self, state: GraphState) -> dict[str, Any]:
+        """Decide the route; any registry/LLM/parse failure falls back to ``plan``."""
         user_msg = _last_user_message(state)
         agents = self._agents()
 
@@ -125,6 +133,8 @@ class RouterNode:
         return self._route_plan(reason="default")
 
     def _try_fast(self, parsed: dict, agents: list) -> dict[str, Any] | None:
+        """Build a one-task plan if the LLM's fast pick resolves, clears confidence,
+        and validates its args; otherwise None so the caller falls back to ``plan``."""
         by_id = {a.agent_id: a for a in agents}
         agent_id = normalize_agent_id(parsed.get("agent_id"), set(by_id))
         info = by_id.get(agent_id) if agent_id else None
@@ -160,6 +170,7 @@ class RouterNode:
         }
 
     def _route_chitchat(self) -> dict[str, Any]:
+        """Route to the synthesizer with an empty plan (yields a clarification)."""
         logger.info("router_decision", route="chitchat")
         return {
             "route": "chitchat",
@@ -169,5 +180,6 @@ class RouterNode:
         }
 
     def _route_plan(self, *, reason: str = "default") -> dict[str, Any]:
+        """The safe default: hand off to the full Planner (``reason`` aids tracing)."""
         logger.info("router_decision", route="plan", reason=reason)
         return {"route": "plan"}

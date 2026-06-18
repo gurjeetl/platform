@@ -153,6 +153,11 @@ def _build_llm_registry(settings: Settings) -> tuple[LLMRegistry, Any]:
 def _build_mcp_adapters(
     settings: Settings, tool_gateway: ConcreteToolGateway
 ) -> list[MCPToolAdapter]:
+    """Build one MCPToolAdapter per configured MCP service (not yet connected).
+
+    Adapters are connected during lifespan startup so a slow/unreachable MCP
+    server can't block app construction.
+    """
     adapters = []
     for service_name, svc_cfg in settings.mcp_services.items():
         client = MCPClient(
@@ -296,6 +301,13 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # type: ignore[type-arg]
+        """App lifespan: wire deps onto app.state, start subsystems, then tear down.
+
+        Startup phases (each isolated so one failure can't stall the app):
+        build deps → start bus/registry → warm guards → init memory indexes →
+        discover distributed agents (+ background refresh loop) → run app startup
+        hooks → connect MCP services. Shutdown reverses these in best-effort order.
+        """
         deps = _build_dependencies(settings, agent_providers=agent_providers)
         for key, val in deps.items():
             setattr(app.state, key, val)
@@ -456,6 +468,7 @@ def create_app(
     # ── Exception handlers ────────────────────────────────────────────────────
     @app.exception_handler(GenieError)
     async def genie_error_handler(request: Request, exc: GenieError) -> JSONResponse:
+        """Render any GenieError as a structured JSON response with its HTTP status."""
         cid = getattr(request.state, "correlation_id", "")
         status = _error_code_to_http_status(exc.code)
         return JSONResponse(
@@ -476,6 +489,7 @@ def create_app(
 
 
 def _error_code_to_http_status(code: ErrorCode) -> int:
+    """Map a domain ErrorCode to an HTTP status code (defaults to 500)."""
     return {
         ErrorCode.NOT_FOUND: 404,
         ErrorCode.VALIDATION_ERROR: 422,

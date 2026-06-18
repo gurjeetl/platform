@@ -23,11 +23,15 @@ COLLECTION = "agent_registry"
 
 
 def _now() -> datetime:
+    """Current UTC time (timezone-aware), used for liveness stamping/filtering."""
     return datetime.now(timezone.utc)
 
 
 class RegistryStore:
+    """MongoDB-backed registry: upsert/heartbeat/deregister + TTL-fresh discovery."""
+
     def __init__(self) -> None:
+        """Connect to Mongo from env and bind the registry collection handle."""
         uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
         db_name = os.getenv("MONGODB_DB", "agent_memory")
         self._ttl = int(os.getenv("REGISTRY_TTL_SECONDS", "90"))
@@ -36,9 +40,11 @@ class RegistryStore:
 
     @property
     def ttl_seconds(self) -> int:
+        """Liveness TTL in seconds (a record is dead once its heartbeat is older)."""
         return self._ttl
 
     async def ensure_indexes(self) -> None:
+        """Create the lookup, freshness, and TTL-expiry indexes (idempotent)."""
         await self._coll.create_index("agent_id")
         await self._coll.create_index([("status", 1), ("last_heartbeat", -1)])
         # TTL backstop: Mongo deletes a doc once last_heartbeat is older than TTL.
@@ -89,11 +95,14 @@ class RegistryStore:
         return result.matched_count > 0
 
     async def deregister(self, instance_id: str) -> bool:
+        """Delete an instance. Returns False if it was not present."""
         result = await self._coll.delete_one({"_id": instance_id})
         return result.deleted_count > 0
 
     # ------------------------------------------------------------------
     def _fresh_filter(self) -> dict:
+        # Liveness predicate: active AND heartbeated within the TTL window. Enforced
+        # in-query so a just-expired-but-not-yet-swept doc is still excluded.
         cutoff = _now() - timedelta(seconds=self._ttl)
         return {"status": "active", "last_heartbeat": {"$gte": cutoff}}
 
@@ -106,6 +115,7 @@ class RegistryStore:
         return out
 
     async def get_agent(self, agent_id: str) -> list[AgentMeta]:
+        """All live instances of one agent_id, rebuilt from the stored meta blob."""
         flt = {**self._fresh_filter(), "agent_id": agent_id}
         cursor = self._coll.find(flt)
         return [self._to_meta(doc) async for doc in cursor]
@@ -116,6 +126,7 @@ class RegistryStore:
 
     @staticmethod
     def _to_meta(doc: dict) -> AgentMeta:
+        """Rebuild an AgentMeta from a stored doc, trusting top-level liveness fields."""
         meta = AgentMeta.model_validate(doc.get("meta", {}))
         # Trust the server-owned liveness fields from the top-level doc.
         meta.last_heartbeat = doc.get("last_heartbeat")
@@ -124,6 +135,7 @@ class RegistryStore:
         return meta
 
     def close(self) -> None:
+        """Close the underlying Mongo client."""
         self._client.close()
 
 
@@ -131,6 +143,7 @@ _store: RegistryStore | None = None
 
 
 def get_registry_store() -> RegistryStore:
+    """Return the process-wide RegistryStore singleton, creating it on first use."""
     global _store
     if _store is None:
         _store = RegistryStore()

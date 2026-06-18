@@ -12,11 +12,14 @@ These mirror the shapes the ported React UIs expect (BaseAgentFramework):
 from __future__ import annotations
 
 import contextlib
+import json
 import time
 import uuid
+from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import APIRouter, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from genie.application.checkpointer import get_thread_config
@@ -32,11 +35,14 @@ _DROP_FIELDS = {"messages", "tool_calls", "tool_results", "rag_context"}
 
 
 class UIChatRequest(BaseModel):
+    """Chat body used by the bundled UIs (message + thread id)."""
+
     message: str
     thread_id: str
 
 
 def _slim_update(update: dict) -> dict:
+    """Drop heavy fields and truncate long strings so trace payloads stay small."""
     out: dict[str, Any] = {}
     for k, v in update.items():
         if k in _DROP_FIELDS:
@@ -49,6 +55,7 @@ def _slim_update(update: dict) -> dict:
 
 
 def _initial_state(message: str, thread_id: str) -> GraphState:
+    """Build the starting GraphState for one user turn."""
     return GraphState(
         conversation_id=thread_id,
         run_id=uuid.uuid4().hex,
@@ -57,6 +64,7 @@ def _initial_state(message: str, thread_id: str) -> GraphState:
 
 
 async def _save_turn(memory: Any, thread_id: str, role: str, content: str) -> None:
+    """Persist one conversation turn to Mongo; best-effort no-op without it."""
     if memory is None or getattr(memory, "mongo", None) is None:
         return
     with contextlib.suppress(Exception):
@@ -65,6 +73,10 @@ async def _save_turn(memory: Any, thread_id: str, role: str, content: str) -> No
 
 @router.post("/chat/ui", summary="Chat (UI shape: {response, view})")
 async def chat_ui(body: UIChatRequest, request: Request) -> dict[str, Any]:
+    """Run one turn and return ``{response, view}`` for the chat UI.
+
+    Saves both the user and assistant turns to durable memory when available.
+    """
     graph = request.app.state.graph
     memory = getattr(request.app.state, "memory", None)
     config = get_thread_config(body.thread_id)
@@ -77,17 +89,24 @@ async def chat_ui(body: UIChatRequest, request: Request) -> dict[str, Any]:
     return {"response": response, "view": result.get("view")}
 
 
-@router.post("/chat/trace", summary="Chat with a step-by-step pipeline trace")
-async def chat_trace(body: UIChatRequest, request: Request) -> dict[str, Any]:
-    graph = request.app.state.graph
-    memory = getattr(request.app.state, "memory", None)
-    run_id = uuid.uuid4().hex
-    config = get_thread_config(f"{body.thread_id}:trace:{run_id}")
+async def _trace_events(
+    graph: Any, memory: Any, message: str, thread_id: str
+) -> AsyncIterator[dict]:
+    """Run the pipeline and yield trace events as each node completes.
 
-    steps: list[dict] = []
+    Emits, in order: one ``meta`` event, one ``step`` event per node update as it
+    streams from the graph, a synthetic ``final`` cleanup ``step``, then a ``done``
+    event with the final answer. On failure, an ``error`` event. Both the buffered
+    (``/chat/trace``) and streaming (``/chat/trace/stream``) endpoints consume this.
+    """
+    run_id = uuid.uuid4().hex
+    config = get_thread_config(f"{thread_id}:trace:{run_id}")
     cumulative: dict = {}
     t0 = time.perf_counter()
-    state = _initial_state(body.message, body.thread_id)
+    state = _initial_state(message, thread_id)
+
+    yield {"type": "meta", "run_id": run_id, "user_input": message, "thread_id": thread_id}
+
     try:
         async for chunk in graph.astream(state.model_dump(), config=config, stream_mode="updates"):
             for node, update in chunk.items():
@@ -97,48 +116,60 @@ async def chat_trace(body: UIChatRequest, request: Request) -> dict[str, Any]:
                 slim = _slim_update(update)
                 if node not in _DB_OP_PRODUCERS:
                     slim.pop("db_ops", None)
-                steps.append(
-                    {
-                        "node": node,
-                        "elapsed_ms": int((time.perf_counter() - t0) * 1000),
-                        "update": slim,
-                    }
-                )
+                yield {
+                    "type": "step",
+                    "node": node,
+                    "elapsed_ms": int((time.perf_counter() - t0) * 1000),
+                    "update": slim,
+                }
     except Exception as exc:  # noqa: BLE001
         logger.error("chat_trace_failed", error=str(exc))
-        return {"error": str(exc), "steps": steps}
+        yield {"type": "error", "error": str(exc)}
+        return
 
     final_text = cumulative.get("final_response") or cumulative.get("error") or ""
-    await _save_turn(memory, body.thread_id, "user", body.message)
+    await _save_turn(memory, thread_id, "user", message)
     if final_text:
-        await _save_turn(memory, body.thread_id, "assistant", final_text)
+        await _save_turn(memory, thread_id, "assistant", final_text)
 
     # Synthetic "final" step: the run is done — clear this run's Redis blackboard
-    # mirror (best-effort; the 1h TTL is the fallback). Surfaced so the trace shows
-    # cleanup after the output guard. Only the executor writes the blackboard, so a
-    # run that never reached it has nothing to clear (honest no-op).
+    # mirror (best-effort; the 1h TTL is the fallback). Honest no-op when nothing ran.
     redis = getattr(memory, "redis", None) if memory is not None else None
     redis_enabled = bool(getattr(redis, "enabled", False))
     wrote_blackboard = bool(cumulative.get("blackboard"))
     if wrote_blackboard and redis_enabled and hasattr(redis, "delete_run"):
         with contextlib.suppress(Exception):
-            await redis.delete_run(body.thread_id, run_id)
-        final_op = {"store": "redis", "op": "delete", "node": "final",
-                    "detail": "blackboard cleared (1h TTL is the fallback)",
-                    "code": f"DEL bb:{body.thread_id}:{run_id}:*", "enabled": True}
+            await redis.delete_run(thread_id, run_id)
+        final_op = {
+            "store": "redis",
+            "op": "delete",
+            "node": "final",
+            "detail": "blackboard cleared (1h TTL is the fallback)",
+            "code": f"DEL bb:{thread_id}:{run_id}:*",
+            "enabled": True,
+        }
     else:
-        final_op = {"store": "redis", "op": "delete", "node": "final",
-                    "detail": ("no blackboard written this run — nothing to clear (no-op)"
-                               if not wrote_blackboard else "Redis disabled — TTL/no-op"),
-                    "code": f"DEL bb:{body.thread_id}:{run_id}:*  → 0 keys", "enabled": redis_enabled}
-    steps.append({"node": "final", "elapsed_ms": int((time.perf_counter() - t0) * 1000),
-                  "update": {"db_ops": [final_op]}})
+        final_op = {
+            "store": "redis",
+            "op": "delete",
+            "node": "final",
+            "detail": (
+                "no blackboard written this run — nothing to clear (no-op)"
+                if not wrote_blackboard
+                else "Redis disabled — TTL/no-op"
+            ),
+            "code": f"DEL bb:{thread_id}:{run_id}:*  → 0 keys",
+            "enabled": redis_enabled,
+        }
+    yield {
+        "type": "step",
+        "node": "final",
+        "elapsed_ms": int((time.perf_counter() - t0) * 1000),
+        "update": {"db_ops": [final_op]},
+    }
 
-    return {
-        "user_input": body.message,
-        "thread_id": body.thread_id,
-        "run_id": run_id,
-        "steps": steps,
+    yield {
+        "type": "done",
         "session_loaded": {"turns": 0, "preview": "", "facts": []},
         "final": {
             "response": final_text,
@@ -148,8 +179,64 @@ async def chat_trace(body: UIChatRequest, request: Request) -> dict[str, Any]:
     }
 
 
+@router.post("/chat/trace", summary="Chat with a step-by-step pipeline trace (buffered)")
+async def chat_trace(body: UIChatRequest, request: Request) -> dict[str, Any]:
+    """Run the pipeline and return the full trace (meta + steps + final) at once."""
+    graph = request.app.state.graph
+    memory = getattr(request.app.state, "memory", None)
+    meta: dict = {}
+    steps: list[dict] = []
+    final: dict = {}
+    session: dict = {"turns": 0, "preview": "", "facts": []}
+    async for ev in _trace_events(graph, memory, body.message, body.thread_id):
+        kind = ev["type"]
+        if kind == "meta":
+            meta = ev
+        elif kind == "step":
+            steps.append(
+                {"node": ev["node"], "elapsed_ms": ev["elapsed_ms"], "update": ev["update"]}
+            )
+        elif kind == "error":
+            return {"error": ev["error"], "steps": steps}
+        elif kind == "done":
+            final, session = ev["final"], ev["session_loaded"]
+    return {
+        "user_input": meta.get("user_input"),
+        "thread_id": meta.get("thread_id"),
+        "run_id": meta.get("run_id"),
+        "steps": steps,
+        "session_loaded": session,
+        "final": final,
+    }
+
+
+@router.post("/chat/trace/stream", summary="Chat trace streamed live (NDJSON, one event per line)")
+async def chat_trace_stream(body: UIChatRequest, request: Request) -> StreamingResponse:
+    """Stream the trace as it executes — one JSON event per line (meta / step / done /
+    error). The UI renders each node the moment it finishes instead of waiting for the
+    whole pipeline, so input_guard → router → planner → … appear live."""
+    graph = request.app.state.graph
+    memory = getattr(request.app.state, "memory", None)
+
+    async def _ndjson() -> AsyncIterator[str]:
+        async for ev in _trace_events(graph, memory, body.message, body.thread_id):
+            yield json.dumps(ev) + "\n"
+
+    # no-transform/no-buffering hints so proxies flush each line immediately.
+    return StreamingResponse(
+        _ndjson(),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.get("/registry", summary="Discovered agents (for the trace UI)")
 async def registry_dump(request: Request) -> dict[str, Any]:
+    """Return discovered agents for the trace UI.
+
+    Prefers live discovery (distributed/hybrid); falls back to the in-process
+    registry in local mode or when the registry service is unavailable.
+    """
     discovery = getattr(request.app.state, "discovery_client", None)
     if discovery is not None:
         try:
@@ -202,6 +289,7 @@ async def registry_dump(request: Request) -> dict[str, Any]:
 
 @router.get("/conversations", summary="List durable conversations (sidebar)")
 async def list_conversations(request: Request, limit: int = 50) -> dict[str, Any]:
+    """List durable conversations from Mongo; empty when memory is in-process."""
     memory = getattr(request.app.state, "memory", None)
     if memory is None or getattr(memory, "mongo", None) is None:
         return {"conversations": []}
@@ -212,6 +300,7 @@ async def list_conversations(request: Request, limit: int = 50) -> dict[str, Any
 
 @router.get("/conversations/{thread_id}", summary="Full history of one conversation")
 async def get_conversation(thread_id: str, request: Request) -> dict[str, Any]:
+    """Return all stored turns for *thread_id* (empty without durable memory)."""
     memory = getattr(request.app.state, "memory", None)
     turns: list = []
     if memory is not None and getattr(memory, "mongo", None) is not None:
@@ -222,6 +311,7 @@ async def get_conversation(thread_id: str, request: Request) -> dict[str, Any]:
 
 @router.delete("/conversations/{thread_id}", summary="Delete a conversation")
 async def delete_conversation(thread_id: str, request: Request) -> dict[str, Any]:
+    """Delete a conversation from durable memory (best-effort no-op without it)."""
     memory = getattr(request.app.state, "memory", None)
     if memory is not None and getattr(memory, "mongo", None) is not None:
         with contextlib.suppress(Exception):
@@ -231,6 +321,7 @@ async def delete_conversation(thread_id: str, request: Request) -> dict[str, Any
 
 @router.get("/state/{thread_id}", summary="LangGraph checkpoint snapshot")
 async def get_state(thread_id: str, request: Request) -> dict[str, Any]:
+    """Return the LangGraph checkpoint values for *thread_id* ({} if none)."""
     graph = request.app.state.graph
     snapshot = graph.get_state(get_thread_config(thread_id))
     return snapshot.values if snapshot and snapshot.values else {}

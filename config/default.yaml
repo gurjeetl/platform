@@ -12,6 +12,7 @@ enable_rag: true
 enable_tracking: true
 enable_hitl: false        # HITL node retained but routed-around by default
 enable_guards: true       # mandatory input/output content guards (BaseAgent parity)
+enable_router: true       # router step (fast/chitchat triage); false → planner-first
 
 # ── Distributed agents (A2A + registry discovery) ──────────────────────────────
 agent_mode: distributed

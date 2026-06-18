@@ -1,4 +1,5 @@
 """Structured logging via structlog."""
+
 from __future__ import annotations
 
 import logging
@@ -18,6 +19,7 @@ class CorrelationProcessor:
         method: str,
         event_dict: dict[str, Any],
     ) -> dict[str, Any]:
+        """Add the current correlation ID to the event dict when one is set."""
         # Lazy import to avoid import-time circular dependency
         from genie.observability.correlation import get_correlation_id
 
@@ -27,9 +29,7 @@ class CorrelationProcessor:
         return event_dict
 
 
-def _add_logger_name(
-    logger: Any, method: str, event_dict: dict[str, Any]
-) -> dict[str, Any]:
+def _add_logger_name(logger: Any, method: str, event_dict: dict[str, Any]) -> dict[str, Any]:
     """Safe logger-name extractor that works with both stdlib and PrintLogger."""
     name = getattr(logger, "name", None)
     if name is None:
@@ -45,9 +45,7 @@ def configure_logging(debug: bool = False, service_name: str = "genie") -> None:
     Call this once at application startup.
     """
 
-    def _add_service(
-        logger: Any, method: str, event_dict: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _add_service(logger: Any, method: str, event_dict: dict[str, Any]) -> dict[str, Any]:
         event_dict.setdefault("service", service_name)
         return event_dict
 

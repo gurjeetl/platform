@@ -85,6 +85,8 @@ _DEFAULT_LIMIT = 5
 
 
 class OutageAgent:
+    """In-process outage agent: lists outages (top-N) or describes one by id."""
+
     agent_id = "outage"
     name = "outage"
     description = (
@@ -97,15 +99,19 @@ class OutageAgent:
     enabled = True
 
     def enable(self) -> None:
+        """Mark this agent as available for routing."""
         self.enabled = True
 
     def disable(self) -> None:
+        """Mark this agent as unavailable for routing."""
         self.enabled = False
 
     async def health_check(self) -> str:
+        """Report liveness; this static agent is always ``healthy``."""
         return "healthy"
 
     def get_info(self) -> AgentInfo:
+        """Return the agent's capability/schema descriptor for discovery + routing."""
         return AgentInfo(
             agent_id=self.agent_id,
             name=self.name,
@@ -149,6 +155,7 @@ class OutageAgent:
         )
 
     async def execute(self, task: AgentTask, context: dict[str, Any]) -> AgentResult:
+        """Detail path if ``args.outage_id`` is given, else the top-N list path."""
         args = (task.context or {}).get("args", {})
         oid = args.get("outage_id")
         if oid is not None:

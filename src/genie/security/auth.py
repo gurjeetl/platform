@@ -1,4 +1,5 @@
 """API-key authentication and prompt-injection detection."""
+
 from __future__ import annotations
 
 import hashlib
@@ -61,6 +62,7 @@ def sanitize_user_input(text: str, max_length: int = 8_192) -> str:
 class ApiKeyMiddleware:
     """ASGI middleware that enforces Bearer API-key authentication."""
 
+    # Probe / docs endpoints stay open so health checks and the OpenAPI UI work.
     EXEMPT_PATHS: frozenset[str] = frozenset({"/health", "/metrics", "/docs", "/openapi.json"})
 
     def __init__(self, app: Any, api_key: str | None) -> None:
@@ -68,6 +70,8 @@ class ApiKeyMiddleware:
         self._api_key = api_key
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        """Reject HTTP requests with a missing/invalid Bearer key (401); pass
+        through when no key is configured, the path is exempt, or auth succeeds."""
         if scope["type"] == "http" and self._api_key:
             path: str = scope.get("path", "")
             if path not in self.EXEMPT_PATHS:

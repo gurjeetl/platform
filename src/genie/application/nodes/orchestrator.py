@@ -23,10 +23,13 @@ logger = get_logger(__name__)
 
 
 class OrchestratorNode:
+    """Decomposes the plan DAG into waves and (optionally) raises the HITL gate."""
+
     def __init__(self, settings: Any) -> None:
         self._settings = settings
 
     async def __call__(self, state: GraphState) -> dict[str, Any]:
+        """Compute execution waves; a cycle/unknown-dep is captured as ``plan_error``."""
         with node_span("orchestrator") as span:
             plan = Plan(**(state.plan or {}))
 

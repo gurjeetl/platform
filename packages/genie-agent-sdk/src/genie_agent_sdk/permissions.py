@@ -1,3 +1,4 @@
+"""Role-based MCP tool gating. Default is pass-through; override per agent."""
 from langchain_core.tools import BaseTool
 
 

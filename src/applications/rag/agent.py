@@ -43,6 +43,11 @@ _DOCS = [
 
 
 def _rank(query: str, k: int = 3) -> list[dict]:
+    """Rank docs by keyword-overlap with the query; return the top-k matches.
+
+    Dependency-free: scores each doc by the size of the word-set intersection,
+    drops zero-overlap docs, and returns the highest-scoring ``k``.
+    """
     q = set(query.lower().split())
     scored = []
     for source, text in _DOCS:
@@ -54,6 +59,8 @@ def _rank(query: str, k: int = 3) -> list[dict]:
 
 
 class RagAgent:
+    """In-process RAG agent: keyword-ranks bundled docs into a cited answer."""
+
     agent_id = "rag"
     name = "rag"
     description = "Answers questions about the platform from its documentation (RAG)."
@@ -62,15 +69,19 @@ class RagAgent:
     enabled = True
 
     def enable(self) -> None:
+        """Mark this agent as available for routing."""
         self.enabled = True
 
     def disable(self) -> None:
+        """Mark this agent as unavailable for routing."""
         self.enabled = False
 
     async def health_check(self) -> str:
+        """Report liveness; this static agent is always ``healthy``."""
         return "healthy"
 
     def get_info(self) -> AgentInfo:
+        """Return the agent's capability/schema descriptor for discovery + routing."""
         return AgentInfo(
             agent_id=self.agent_id,
             name=self.name,
@@ -105,6 +116,7 @@ class RagAgent:
         )
 
     async def execute(self, task: AgentTask, context: dict[str, Any]) -> AgentResult:
+        """Rank docs for ``args.query`` and return a citation-tagged answer + view."""
         query = str((task.context or {}).get("args", {}).get("query", "")).strip()
         chunks = _rank(query)
         if not chunks:

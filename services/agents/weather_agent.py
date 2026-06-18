@@ -1,11 +1,21 @@
+"""Standalone weather agent service (genie-agent-sdk).
+
+Single-tool agent: resolves a city's report via the ``get_weather`` MCP tool and
+formats it. Runs as an independent A2A service that self-registers with the
+Registry (see ``serve_agent`` at the bottom).
+"""
+
 from genie_agent_sdk import AgentMeta, BaseAgent, FieldSpec, serve_agent
 
 
 class WeatherAgent(BaseAgent):
+    """SDK agent that reports a named city's weather via the ``get_weather`` tool."""
+
     system_prompt = "You are a helpful weather reporter for a travel assistant."
     tool_names: list[str] = ["get_weather"]
 
     def run(self, state: dict) -> dict:
+        """Call ``get_weather`` for ``state.location`` and format the report."""
         city = (state.get("location") or "").lower().strip()
         return self.answer_with_tool(
             state,

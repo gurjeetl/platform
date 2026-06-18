@@ -116,6 +116,20 @@ def test_chat_trace_returns_steps(client: TestClient) -> None:
     assert "final" in body
 
 
+def test_chat_trace_stream_emits_ndjson_events(client: TestClient) -> None:
+    import json
+
+    resp = client.post("/api/v1/chat/trace/stream", json={"message": "hi", "thread_id": "trace-s"})
+    assert resp.status_code == 200
+    assert "application/x-ndjson" in resp.headers.get("content-type", "")
+    events = [json.loads(line) for line in resp.text.splitlines() if line.strip()]
+    types = [e["type"] for e in events]
+    assert types[0] == "meta"  # first event identifies the run
+    assert "step" in types  # at least one node streamed
+    assert types[-1] == "done"  # terminal event carries the final answer
+    assert events[-1]["final"]["response"]  # non-empty final answer
+
+
 def test_chat_ui_serves_index_html(client: TestClient) -> None:
     resp = client.get("/")
     assert resp.status_code == 200

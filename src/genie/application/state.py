@@ -8,12 +8,16 @@ from pydantic import BaseModel, Field
 
 
 class Message(BaseModel):
+    """One chat-history turn (system / user / assistant / tool)."""
+
     role: Literal["system", "user", "assistant", "tool"]
     content: str
     name: str | None = None
 
 
 class ToolCallRecord(BaseModel):
+    """API-compat record of a dispatched agent/tool call (surfaced in the trace)."""
+
     call_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     tool_id: str
     agent_id: str
@@ -22,6 +26,8 @@ class ToolCallRecord(BaseModel):
 
 
 class ToolResultRecord(BaseModel):
+    """API-compat result for a ``ToolCallRecord`` — success/output or error."""
+
     call_id: str
     tool_id: str
     success: bool
@@ -31,6 +37,13 @@ class ToolResultRecord(BaseModel):
 
 
 class GraphState(BaseModel):
+    """The single mutable state object threaded through every LangGraph node.
+
+    Nodes return partial dicts that LangGraph merges into this model; later nodes
+    read what earlier ones wrote. Fields fall into the legacy/API-compat block
+    (top) and the DAG planner/orchestrator/gate/synthesizer block (below).
+    """
+
     conversation_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     correlation_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     run_id: str = Field(default_factory=lambda: str(uuid.uuid4()))

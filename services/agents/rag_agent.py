@@ -1,3 +1,10 @@
+"""Standalone RAG agent service (genie-agent-sdk).
+
+Retrieves doc chunks via the ``search_docs`` MCP tool, then has the LLM compose a
+grounded, cited answer from that context only. Runs as an independent A2A service
+that self-registers with the Registry (see ``serve_agent`` at the bottom).
+"""
+
 import json
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -24,12 +31,14 @@ class RagAgent(BaseAgent):
 
     @staticmethod
     def _parse_json(s: str) -> dict:
+        """Parse the ``search_docs`` JSON result; return ``{}`` on bad/empty input."""
         try:
             return json.loads(s)
         except (json.JSONDecodeError, TypeError):
             return {}
 
     def _answer(self, query: str) -> tuple[str, dict] | str:
+        """Retrieve chunks for ``query``, LLM-compose a cited answer + sources view."""
         data = self._parse_json(self.call_mcp_tool("search_docs", {"query": query, "k": 4}))
         chunks = data.get("chunks", [])
         if not chunks:
@@ -61,6 +70,7 @@ class RagAgent(BaseAgent):
         return answer, view
 
     def run(self, state: dict) -> dict:
+        """Answer ``state.query`` (or ``user_input``) from the docs; prompt if empty."""
         query = (state.get("query") or state.get("user_input") or "").strip()
         if not query:
             return self.answer_with(

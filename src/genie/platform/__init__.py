@@ -1,4 +1,5 @@
 """Genie platform core: config, errors, event bus, and feature flags."""
+
 from .config import Settings, get_settings, override_settings
 from .errors import ErrorCode, ErrorResponse, GenieError, error_response
 from .event_bus import (

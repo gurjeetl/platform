@@ -1,4 +1,5 @@
 """Low-level async MCP client — persistent background-task lifecycle."""
+
 from __future__ import annotations
 
 import asyncio
@@ -27,7 +28,12 @@ class MCPClient:
         await client.disconnect()
     """
 
-    def __init__(self, name: str, url: str, transport: str = "streamable_http", connect_timeout: float = 30.0) -> None:
+    def __init__(
+        self, name: str, url: str, transport: str = "streamable_http", connect_timeout: float = 30.0
+    ) -> None:
+        """Configure (but don't open) a connection to the MCP server at ``url``.
+        Events/session/task are created lazily in ``connect`` so they bind to the
+        current event loop."""
         self.name = name
         self.url = url
         self.transport = transport
@@ -55,9 +61,7 @@ class MCPClient:
         self._stop_event = asyncio.Event()
         self._connect_error = None
 
-        self._task = asyncio.create_task(
-            self._run_forever(), name=f"mcp-{self.name}"
-        )
+        self._task = asyncio.create_task(self._run_forever(), name=f"mcp-{self.name}")
 
         effective_timeout = timeout if timeout is not None else self.connect_timeout
         # Wait for _run_forever to signal readiness (or failure).
@@ -87,6 +91,7 @@ class MCPClient:
     # ── Tool discovery ────────────────────────────────────────────────────────
 
     async def list_tools(self) -> list[Any]:
+        """Tools advertised by the server; empty list when not connected or on error."""
         if not self._session:
             return []
         try:
@@ -99,7 +104,11 @@ class MCPClient:
     # ── Tool invocation ───────────────────────────────────────────────────────
 
     async def call_tool(self, tool_name: str, params: dict[str, Any]) -> Any:
+        """Invoke a server tool and normalise its content blocks into one value:
+        a single text block as-is, multiple blocks re-assembled into a JSON array
+        string, or model-dumped non-text content. Raises if not connected."""
         import json as _json
+
         if not self._session:
             raise RuntimeError(f"MCP client '{self.name}' is not connected")
         result = await self._session.call_tool(tool_name, params)
@@ -108,10 +117,7 @@ class MCPClient:
 
         if not text_blocks:
             # No text content (empty list result or non-text content)
-            return [
-                c.model_dump() if hasattr(c, "model_dump") else str(c)
-                for c in result.content
-            ]
+            return [c.model_dump() if hasattr(c, "model_dump") else str(c) for c in result.content]
 
         if len(text_blocks) == 1:
             # Single block — return as-is (backward compat for plain strings and
@@ -173,6 +179,8 @@ class MCPClient:
                 self._ready_event.set()
 
     async def _cancel_task(self, *, graceful: bool = False) -> None:
+        """Await the background task to completion, cancelling it unless ``graceful``
+        (in which case ``_stop_event`` was already set to let it unwind cleanly)."""
         if self._task is None or self._task.done():
             return
         if not graceful:

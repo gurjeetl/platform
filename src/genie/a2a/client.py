@@ -33,8 +33,11 @@ class A2AError(RuntimeError):
 
 
 class A2AClient:
+    """Stateless A2A JSON-RPC client; the target endpoint is passed per ``send``."""
+
     @staticmethod
     def _headers() -> dict:
+        """Bearer auth header from ``AGENT_INVOKE_TOKEN`` (empty when unset)."""
         token = os.getenv("AGENT_INVOKE_TOKEN")
         return {"Authorization": f"Bearer {token}"} if token else {}
 
@@ -42,6 +45,7 @@ class A2AClient:
     def _build_request(
         agent_id: str, args: dict | None, context: dict, sla_ms: int
     ) -> JsonRpcRequest:
+        """Wrap args + routing context into a spec-shaped ``message/send`` request."""
         ctx = dict(context or {})
         message = Message(
             role="user",
@@ -67,6 +71,7 @@ class A2AClient:
 
     @staticmethod
     def _parse_response(data: Any) -> Message:
+        """Validate the JSON-RPC envelope; raise A2AError on error or empty result."""
         rpc = JsonRpcResponse.model_validate(data)
         if rpc.error is not None:
             raise A2AError(rpc.error.message, code=rpc.error.code)
@@ -95,6 +100,7 @@ class A2AClient:
         timeout = httpx.Timeout(sla_ms / 1000.0)
 
         async def _post(client: httpx.AsyncClient) -> Message:
+            # Single round-trip; reused for both the provided and the throwaway client.
             resp = await client.post(url, json=payload, headers=self._headers(), timeout=timeout)
             resp.raise_for_status()
             return self._parse_response(resp.json())

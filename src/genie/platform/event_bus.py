@@ -1,4 +1,5 @@
 """In-process async event bus with a broker-shaped interface."""
+
 from __future__ import annotations
 
 import asyncio
@@ -35,6 +36,7 @@ class Event(BaseModel):
 
 # ── Bus ───────────────────────────────────────────────────────────────────────
 
+
 class EventBus:
     """Simple in-process async publish/subscribe event bus.
 
@@ -44,6 +46,7 @@ class EventBus:
     """
 
     def __init__(self) -> None:
+        """Initialise empty subscriber tables and a dedicated structlog logger."""
         self._handlers: dict[str, list[EventHandler]] = defaultdict(list)
         self._started: bool = False
         # Use structlog directly to avoid import-time circular dependency with

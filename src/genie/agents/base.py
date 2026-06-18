@@ -23,6 +23,7 @@ class AgentCapability(str):
     """
 
     def __new__(cls, value: str) -> AgentCapability:
+        """Construct a capability from any string (no validation — it's open)."""
         return str.__new__(cls, value)
 
     GENERAL = "general"
@@ -53,6 +54,8 @@ class CapabilitySpec(BaseModel):
 
 
 class AgentTask(BaseModel):
+    """A unit of work dispatched to an agent: instruction + structured ``context``."""
+
     task_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     agent_id: str
     conversation_id: str = ""
@@ -63,6 +66,8 @@ class AgentTask(BaseModel):
 
 
 class AgentResult(BaseModel):
+    """An agent's reply: ``output`` text plus optional structured ``data`` or ``error``."""
+
     task_id: str
     agent_id: str
     success: bool
