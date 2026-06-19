@@ -34,7 +34,9 @@ guards = ["llm-guard>=0.3.15"]
 # Multi-store memory backends — each no-ops unless its config is set.
 memory-mongo = ["motor>=3.4"]
 memory-redis = ["redis>=4.2"]
-memory-vector = ["pymilvus[milvus_lite]>=2.4"]
+# Pinned <3: pymilvus 3.x changes the server pairing; the VectorStore adapter and
+# the docker/milvus-standalone.yml server image target the stable 2.5.x line.
+memory-vector = ["pymilvus[milvus_lite]>=2.5,<3"]
 memory-postgres = ["psycopg2-binary>=2.9"]
 # Local multi-intent classifier for the router (reuses torch from guards).
 router-classifier = ["sentence-transformers>=2.7"]
@@ -43,7 +45,7 @@ all = [
     "llm-guard>=0.3.15",
     "motor>=3.4",
     "redis>=4.2",
-    "pymilvus[milvus_lite]>=2.4",
+    "pymilvus[milvus_lite]>=2.5,<3",
     "psycopg2-binary>=2.9",
     "sentence-transformers>=2.7",
 ]

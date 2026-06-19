@@ -202,6 +202,37 @@ async def test_writeback_commits_embeds_and_extracts_facts() -> None:
     assert mongo.upserts[0]["scope"] == "global"
 
 
+async def test_writeback_returns_db_ops_for_each_write() -> None:
+    """writeback reports a trace db_op per real datastore write so the
+    Synthesizer step can surface them in the trace UI."""
+    mongo = StubMongo()
+    vector = StubVector()
+    llm = StubLLM('{"facts":[{"key":"home_city","value":"Chicago","scope":"global"}]}')
+    facade = MemoryFacade(mongo=mongo, vector=vector, llm=llm)
+
+    state = GraphState(conversation_id="conv1", run_id="run1")
+    state.messages = [
+        __import__("genie.application.state", fromlist=["Message"]).Message(
+            role="user", content="where do I live"
+        )
+    ]
+    blackboard = {"t1": {"agent_id": "weather", "text": "It is sunny in Chicago."}}
+
+    ops = await facade.writeback(state, blackboard, "You live in Chicago.")
+
+    commit_ops = [o for o in ops if o["store"] == "mongodb" and o["detail"].startswith("commit ")]
+    assert commit_ops and commit_ops[0]["detail"] == "commit t1"
+    assert any(o["store"] == "milvus" and o["op"] == "write" for o in ops)
+    fact_ops = [o for o in ops if o["store"] == "mongodb" and "fact" in o["detail"]]
+    assert fact_ops and fact_ops[0]["hits"] == ["home_city"]
+
+
+async def test_writeback_returns_empty_without_backends() -> None:
+    """No stores configured → nothing written → no db_ops to report."""
+    facade = MemoryFacade()
+    assert await facade.writeback(GraphState(conversation_id="c"), {"t1": {"text": "x"}}, "a") == []
+
+
 async def test_writeback_skips_facts_when_partial() -> None:
     mongo = StubMongo()
     llm = StubLLM('{"facts":[{"key":"x","value":"y","scope":"session"}]}')

@@ -23,6 +23,8 @@ async def test_all_present_synthesizes(settings):
         _state(plan, {"t1": {"agent_id": "weather", "text": "ok"}})
     )
     assert out["metadata"]["gate_action"] == "synthesize"
+    # next_action mirrors gate_action as a top-level field the trace UI reads.
+    assert out["next_action"] == "synthesize"
     assert out["partial"] is False
 
 
@@ -31,6 +33,7 @@ async def test_errored_task_triggers_replan(settings):
     plan = Plan(subtasks=[Subtask(id="t1", agent_id="weather")])
     out = await CompletionGateNode(settings=settings)(_state(plan, {"t1": {"error": "boom"}}))
     assert out["metadata"]["gate_action"] == "replan"
+    assert out["next_action"] == "replan"
     assert out["replan_count"] == 1
     assert out["partial"] is True
 

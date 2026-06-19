@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import time
 from contextlib import asynccontextmanager, contextmanager
 from typing import Any, AsyncIterator, Generator
@@ -10,6 +11,13 @@ from typing import Any, AsyncIterator, Generator
 from genie.observability.logging import get_logger
 
 logger = get_logger(__name__)
+
+# MLflow's end_run() prints "🏃 View run … at: …" to stdout before it marks the
+# run FINISHED. On Windows the console codec (cp1252) can't encode the emoji, so
+# the print raises UnicodeEncodeError *before* the run's terminal status is
+# written — leaving every run stuck in RUNNING. Suppressing the URL print makes
+# end_run() finalize correctly. Set at import so it covers every launch path.
+os.environ.setdefault("MLFLOW_SUPPRESS_PRINTING_URL_TO_STDOUT", "true")
 
 
 @contextmanager

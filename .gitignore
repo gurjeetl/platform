@@ -22,6 +22,17 @@ mlruns.db
 mlflow.db
 mlflow*.db
 
+# ── Local datastores (Milvus standalone, Milvus-Lite) ───────────────────────────
+docker/volumes/
+milvus_local.db
+*.milvus_local.db.lock
+
+# ── Local-only scripts + red-team artifacts (not published) ──────────────────
+scripts/
+redteam_report.md
+redteam_report.xlsx
+redteam_results.json
+
 # ── Tool caches ───────────────────────────────────────────────────────────────
 .pytest_cache/
 .import_linter_cache/

@@ -93,6 +93,23 @@ class RedisStore:
             logger.warning("redis_get_failed", key=key, error=str(exc))
             return None
 
+    async def delete_run(self, thread_id: str, run_id: str) -> int:
+        """Delete this run's blackboard mirror keys (``bb:{thread}:{run}:*``).
+
+        Returns the number of keys removed; 0 when disabled, none match, or on error.
+        The 1h TTL is the fallback when this best-effort sweep can't run.
+        """
+        client = self._client()
+        if not client:
+            return 0
+        pattern = f"bb:{thread_id}:{run_id}:*"
+        try:
+            keys = [key async for key in client.scan_iter(match=pattern)]
+            return int(await client.delete(*keys)) if keys else 0
+        except Exception as exc:
+            logger.warning("redis_delete_run_failed", pattern=pattern, error=str(exc))
+            return 0
+
     async def aclose(self) -> None:
         """Close every per-loop client and clear the registry (shutdown hook)."""
         for client in list(self._clients.values()):

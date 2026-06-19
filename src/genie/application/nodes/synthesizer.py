@@ -17,22 +17,21 @@ import json
 from typing import Any
 
 from genie.application.dag import Plan
+from genie.application.prompts import (
+    DEFAULT_SYSTEM_CONTEXT,
+    DEFAULT_SYSTEM_PROMPT,
+    SYNTHESIZER_PROMPT,
+)
 from genie.application.state import GraphState, Message
 from genie.observability.logging import get_logger
 from genie.tracking import node_span
 
 logger = get_logger(__name__)
 
-_SYSTEM_PROMPT = (
-    "You are a synthesis agent. You will receive a JSON blackboard whose keys are "
-    'task ids and whose values are agent outputs (or {"error": ...} entries). '
-    "Compose one concise, helpful answer to the user's original request by merging "
-    "the successful outputs. For any blackboard entry that contains an error, mark "
-    "that section [PARTIAL] in the final answer. Do not invent facts. Do not include "
-    "raw JSON in the output."
+_CLARIFICATION = (
+    "I couldn't match your request to an available agent. "
+    "Could you rephrase it or add a little more detail?"
 )
-
-_CLARIFICATION = "I can help with weather or grid outages. Could you tell me what you need?"
 
 
 def _last_user_message(state: GraphState) -> str:
@@ -50,6 +49,11 @@ class SynthesizerNode:
         self._llm = llm_provider
         self._settings = settings
         self._memory = memory
+        # Render once from the app-provided persona/context (or the platform default).
+        self._system_prompt = SYNTHESIZER_PROMPT.safe_substitute(
+            system_prompt=getattr(settings, "app_system_prompt", "") or DEFAULT_SYSTEM_PROMPT,
+            system_context=getattr(settings, "app_system_context", "") or DEFAULT_SYSTEM_CONTEXT,
+        )
 
     async def __call__(self, state: GraphState) -> dict[str, Any]:
         """Synthesize the answer and record its length on the trace span."""
@@ -61,12 +65,19 @@ class SynthesizerNode:
             return result
 
     @staticmethod
-    def _emit(state: GraphState, text: str, view: dict | None = None) -> dict[str, Any]:
+    def _emit(
+        state: GraphState,
+        text: str,
+        view: dict | None = None,
+        db_ops: list[dict] | None = None,
+    ) -> dict[str, Any]:
         """Finalize: append the assistant turn, set final_response + is_complete."""
         messages = list(state.messages) + [Message(role="assistant", content=text)]
         out: dict[str, Any] = {"final_response": text, "messages": messages, "is_complete": True}
         if view:
             out["view"] = view
+        if db_ops:
+            out["db_ops"] = db_ops
         return out
 
     @staticmethod
@@ -109,8 +120,8 @@ class SynthesizerNode:
             text = entry.get("text") or ""
             if state.partial:
                 text = f"[PARTIAL] {text}".strip()
-            await self._writeback(state, blackboard, text)
-            return self._emit(state, text, view)
+            db_ops = await self._writeback(state, blackboard, text)
+            return self._emit(state, text, view, db_ops=db_ops)
 
         # Multi-task or no view — LLM-synthesize prose.
         user_input = _last_user_message(state)
@@ -118,7 +129,7 @@ class SynthesizerNode:
         try:
             response = await self._llm.complete(
                 [
-                    Message(role="system", content=_SYSTEM_PROMPT),
+                    Message(role="system", content=self._system_prompt),
                     Message(
                         role="user",
                         content=(
@@ -138,12 +149,21 @@ class SynthesizerNode:
 
         if state.partial and "[PARTIAL]" not in text:
             text = f"[PARTIAL] {text}"
-        await self._writeback(state, blackboard, text)
-        return self._emit(state, text)
+        db_ops = await self._writeback(state, blackboard, text)
+        return self._emit(state, text, db_ops=db_ops)
 
-    async def _writeback(self, state: GraphState, blackboard: dict[str, dict], text: str) -> None:
-        """Durable persistence + semantic embedding + fact extraction (Phase 3)."""
+    async def _writeback(
+        self, state: GraphState, blackboard: dict[str, dict], text: str
+    ) -> list[dict]:
+        """Durable persistence + semantic embedding + fact extraction (Phase 3).
+
+        Returns the trace ``db_ops`` for the real datastore writes performed (empty
+        when memory is absent, the answer is partial, or nothing was written).
+        """
         if self._memory is None or state.partial or not (text or "").strip():
-            return
-        with contextlib.suppress(Exception):
-            await self._memory.writeback(state, blackboard, text)
+            return []
+        try:
+            return await self._memory.writeback(state, blackboard, text) or []
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("synthesizer_writeback_failed", error=str(exc))
+            return []

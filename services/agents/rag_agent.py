@@ -10,6 +10,7 @@ import json
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from genie_agent_sdk import AgentMeta, BaseAgent, FieldSpec, serve_agent
+from prompts import RAG_SYSTEM_PROMPT, RAG_USER_PROMPT
 
 
 class RagAgent(BaseAgent):
@@ -21,12 +22,7 @@ class RagAgent(BaseAgent):
     fast-paths to for 'what is / how does / explain' questions.
     """
 
-    system_prompt = (
-        "You are a documentation assistant for an agentic-workflow platform. "
-        "Answer the user's question USING ONLY the provided context chunks. Cite "
-        "the chunks you use inline as [n]. If the context does not contain the "
-        "answer, say so plainly instead of guessing. Be concise and concrete."
-    )
+    system_prompt = RAG_SYSTEM_PROMPT
     tool_names: list[str] = ["search_docs"]
 
     @staticmethod
@@ -50,13 +46,7 @@ class RagAgent(BaseAgent):
         )
         messages = [
             SystemMessage(content=self.system_prompt),
-            HumanMessage(
-                content=(
-                    f"QUESTION:\n{query}\n\n"
-                    f"CONTEXT:\n{context}\n\n"
-                    "Answer using only the context above, citing sources as [n]."
-                )
-            ),
+            HumanMessage(content=RAG_USER_PROMPT.safe_substitute(query=query, context=context)),
         ]
         answer = self.call_llm(messages)
         view = {

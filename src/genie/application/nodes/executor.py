@@ -87,10 +87,13 @@ class ExecutorNode:
         if state.plan_error:
             return {"blackboard": {"_plan_error": {"error": state.plan_error}}}
 
+        # Task ids mirrored to Redis this run (tid, ok) — drives the trace db_ops card.
+        written: list[tuple[str, bool]] = []
+
         wave_ids = state.waves or []
         if not plan.subtasks or not wave_ids:
             logger.info("executor_nothing_to_run")
-            return self._finalize(state, plan, bb)
+            return self._finalize(state, plan, bb, written)
 
         for wave_idx, ids in enumerate(wave_ids):
             wave = [by_id[tid] for tid in ids if tid in by_id]
@@ -98,12 +101,48 @@ class ExecutorNode:
             if not todo:
                 continue
             logger.info("executor_wave_start", wave=wave_idx, count=len(todo))
-            await asyncio.gather(*(self._run_task(t, wave_idx, bb, state) for t in todo))
+            await asyncio.gather(
+                *(self._run_task(t, wave_idx, bb, state, written) for t in todo)
+            )
             logger.info("executor_wave_done", wave=wave_idx)
 
-        return self._finalize(state, plan, bb)
+        return self._finalize(state, plan, bb, written)
 
-    def _finalize(self, state: GraphState, plan: Plan, bb: Blackboard) -> dict[str, Any]:
+    def _blackboard_db_ops(
+        self, state: GraphState, written: list[tuple[str, bool]]
+    ) -> list[dict[str, Any]]:
+        """One trace ``db_op`` summarizing this run's blackboard mirror to Redis.
+
+        Every ``bb.write``/``bb.write_error`` mirrors the result to
+        ``bb:{thread}:{run}:{task_id}`` with a 1h TTL. Reported with ``enabled`` so the
+        card honestly shows ``disabled (no-op)`` when Redis isn't configured.
+        """
+        if not written:
+            return []
+        enabled = bool(getattr(self._redis, "enabled", False))
+        n = len(written)
+        return [
+            {
+                "store": "redis",
+                "op": "write",
+                "node": "executor",
+                "detail": f"blackboard mirrored — {n} task result{'s' if n != 1 else ''} (1h TTL)",
+                "code": f"SET bb:{state.conversation_id}:{state.run_id}:* EX 3600",
+                "enabled": enabled,
+                "hits": [
+                    f"bb:{state.conversation_id}:{state.run_id}:{tid} → {'ok' if ok else 'error'}"
+                    for tid, ok in written
+                ],
+            }
+        ]
+
+    def _finalize(
+        self,
+        state: GraphState,
+        plan: Plan,
+        bb: Blackboard,
+        written: list[tuple[str, bool]] | None = None,
+    ) -> dict[str, Any]:
         """Surface the blackboard plus API-compat tool records / selected agents."""
         snap = bb.snapshot()
         tool_calls: list[ToolCallRecord] = []
@@ -132,6 +171,7 @@ class ExecutorNode:
             "selected_agents": selected,
             "tool_calls": tool_calls,
             "tool_results": tool_results,
+            "db_ops": self._blackboard_db_ops(state, written or []),
         }
 
     # ── Runtime data-passing: resolve ${task_id.path} arg references ────────────
@@ -177,17 +217,24 @@ class ExecutorNode:
         return _REF_RE.sub(_sub, value)
 
     async def _run_task(
-        self, task: Subtask, wave_idx: int, bb: Blackboard, state: GraphState
+        self,
+        task: Subtask,
+        wave_idx: int,
+        bb: Blackboard,
+        state: GraphState,
+        written: list[tuple[str, bool]],
     ) -> None:
         """Dispatch one subtask through the registry with SLA timeout + one retry.
 
         Resolves arg references, builds the ``AgentTask``, and writes the result (or
-        an error entry) to the blackboard. Never raises — failures are captured so the
-        gate can decide whether to re-plan.
+        an error entry) to the blackboard. Records each write in ``written`` for the
+        trace. Never raises — failures are captured so the gate can decide whether to
+        re-plan.
         """
         agent = self._registry.get(task.agent_id)
         if agent is None:
             await bb.write_error(task.id, f"agent_id '{task.agent_id}' not in registry")
+            written.append((task.id, False))
             return
 
         resolved_args = self._resolve_args(task.args or {}, bb)
@@ -224,6 +271,7 @@ class ExecutorNode:
                 if view:
                     payload["view"] = view
                 await bb.write(task.id, payload)
+                written.append((task.id, True))
                 with contextlib.suppress(Exception):
                     if self._event_bus is not None:
                         from genie.platform.event_bus import TOPIC_AGENT_EXECUTED
@@ -251,3 +299,4 @@ class ExecutorNode:
                 )
 
         await bb.write_error(task.id, last_error or "unknown failure")
+        written.append((task.id, False))

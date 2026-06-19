@@ -21,18 +21,17 @@ from typing import Any
 from genie.agents.registry import AgentRegistry
 from genie.application.dag import Plan, Subtask
 from genie.application.parsing import extract_json, normalize_agent_id, render_capability_menu
+from genie.application.prompts import (
+    DEFAULT_SYSTEM_CONTEXT,
+    DEFAULT_SYSTEM_PROMPT,
+    ROUTER_PROMPT,
+    ROUTER_SCHEMA_HINT,
+)
 from genie.application.state import GraphState, Message
 from genie.observability.logging import get_logger
 from genie.tracking import node_span
 
 logger = get_logger(__name__)
-
-_ROUTER_SCHEMA_HINT = (
-    "Respond ONLY with valid JSON in this exact shape:\n"
-    '{"route":"fast|chitchat|plan","agent_id":"<one agent_id or null>",'
-    '"args":{...},"confidence":0.0}\n'
-    "No extra text, no markdown fences, no explanation — just the JSON."
-)
 
 # Cheap, pre-LLM signal that a prompt is clearly multi-intent (always falls through
 # to the planner anyway). Conservative additive connectors only.
@@ -76,25 +75,11 @@ class RouterNode:
 
     def _build_system_prompt(self, agents: list) -> str:
         """Build the routing prompt: the three routes plus the live capability menu."""
-        menu = render_capability_menu(agents)
-        return (
-            "You are a fast intent ROUTER sitting in front of a planner. Pick the "
-            "cheapest correct route for the user's message. Choose exactly ONE:\n\n"
-            '- "fast": the message maps to EXACTLY ONE agent below and you can fill '
-            "its required inputs (marked *). Put the agent_id and args.\n"
-            '- "chitchat": greeting, thanks, small talk, or a meta question '
-            '("what can you do?") that needs NO agent. agent_id=null, args={}.\n'
-            '- "plan": ANYTHING else — multiple agents needed, ambiguous, missing '
-            "required info, or you are unsure. THIS IS THE SAFE DEFAULT.\n\n"
-            "REGISTERED AGENTS:\n"
-            f"{menu}\n\n"
-            "Rules:\n"
-            '- When in doubt, choose "plan". Only choose "fast" when one agent '
-            "clearly and solely satisfies the request.\n"
-            '- If the request needs two or more agents, choose "plan".\n'
-            '- confidence is your 0.0-1.0 certainty in a "fast" match.\n'
-            "- City names go in args as lowercase strings.\n\n"
-            f"{_ROUTER_SCHEMA_HINT}"
+        return ROUTER_PROMPT.safe_substitute(
+            system_prompt=self._settings.app_system_prompt or DEFAULT_SYSTEM_PROMPT,
+            system_context=self._settings.app_system_context or DEFAULT_SYSTEM_CONTEXT,
+            capability_menu=render_capability_menu(agents),
+            schema_hint=ROUTER_SCHEMA_HINT,
         )
 
     async def _route(self, state: GraphState) -> dict[str, Any]:

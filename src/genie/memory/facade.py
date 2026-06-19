@@ -47,8 +47,11 @@ class MemoryFacade:
         llm: Any = None,
         embed: Any = None,
     ) -> None:
-        self._mongo = mongo
-        self._vector = vector
+        # Public: bootstrap calls mongo.ensure_indexes() and the UI router uses it
+        # directly for save_turn / conversation list / get / delete. The planner
+        # reads mongo/vector .enabled to report its recall db_ops in the trace.
+        self.mongo = mongo
+        self.vector = vector
         # Exposed so bootstrap can pass it to the executor as the blackboard mirror.
         self.redis = redis
         self._llm = llm
@@ -61,56 +64,100 @@ class MemoryFacade:
         Returns a list of {"content": ...}. Empty when vector memory is absent
         or disabled.
         """
-        if self._vector is None or not getattr(self._vector, "enabled", False):
+        if self.vector is None or not getattr(self.vector, "enabled", False):
             return []
         try:
-            return await self._vector.search(conversation_id, query)
+            return await self.vector.search(conversation_id, query)
         except Exception as exc:
             logger.warning("memory_recall_failed", error=str(exc))
             return []
 
     async def query_facts(self, conversation_id: str) -> dict[str, str]:
         """Merged global + session facts visible to this conversation."""
-        if self._mongo is None or not getattr(self._mongo, "enabled", False):
+        if self.mongo is None or not getattr(self.mongo, "enabled", False):
             return {}
         try:
-            return await self._mongo.query_facts(conversation_id)
+            return await self.mongo.query_facts(conversation_id)
         except Exception as exc:
             logger.warning("memory_query_facts_failed", error=str(exc))
             return {}
 
     # ── write-back ───────────────────────────────────────────────────────────
-    async def writeback(self, state: Any, blackboard: dict, text: str) -> None:
+    async def writeback(self, state: Any, blackboard: dict, text: str) -> list[dict[str, Any]]:
         """Persist this turn: durable commits, semantic embedding, durable facts.
 
         Best-effort throughout — each step catches its own errors so a failure
-        just logs and writeback returns normally.
+        just logs and writeback returns normally. Returns one trace ``db_op`` per
+        real datastore write so the Synthesizer step can surface them in the UI.
         """
         conversation_id = getattr(state, "conversation_id", "") or ""
         run_id = getattr(state, "run_id", "") or ""
+        ops: list[dict[str, Any]] = []
 
         # (a) Commit persistable fields to Mongo. We don't have the agent registry
         # output_schema persist flags wired here, so commit the whole turn text
         # per task (spec's fallback).
-        await self._commit(state, blackboard, text, conversation_id, run_id)
+        for task_id in await self._commit(state, blackboard, text, conversation_id, run_id):
+            ops.append(
+                {
+                    "store": "mongodb",
+                    "op": "write",
+                    "node": "synthesizer",
+                    "detail": f"commit {task_id}",
+                    "code": (
+                        f"db.agent_commits.insertOne({{run_id:'{run_id}', "
+                        f"task_id:'{task_id}'}})"
+                    ),
+                    "enabled": True,
+                }
+            )
 
         # (b) Embed the final answer for future semantic recall.
         summary = (text or "").strip()
-        if summary and self._vector is not None and getattr(self._vector, "enabled", False):
+        if summary and self.vector is not None and getattr(self.vector, "enabled", False):
             try:
-                await self._vector.add(conversation_id, summary[:1000])
+                await self.vector.add(conversation_id, summary[:1000])
+                ops.append(
+                    {
+                        "store": "milvus",
+                        "op": "write",
+                        "node": "synthesizer",
+                        "detail": "answer embedded for semantic recall",
+                        "code": f"milvus.insert(long_term_memory, thread='{conversation_id}')",
+                        "enabled": True,
+                    }
+                )
             except Exception as exc:
                 logger.warning("memory_vector_add_failed", error=str(exc))
 
         # (c) LLM-extract durable facts and upsert each into Mongo.
-        await self._extract_and_store_facts(state, blackboard, text, conversation_id, run_id)
+        fact_keys = await self._extract_and_store_facts(
+            state, blackboard, text, conversation_id, run_id
+        )
+        if fact_keys:
+            n = len(fact_keys)
+            ops.append(
+                {
+                    "store": "mongodb",
+                    "op": "write",
+                    "node": "synthesizer",
+                    "detail": f"{n} durable fact{'s' if n != 1 else ''} upserted",
+                    "code": "db.agent_facts.updateOne({scope, key}, ..., {upsert:true})",
+                    "enabled": True,
+                    "hits": fact_keys,
+                }
+            )
+        return ops
 
     async def _commit(
         self, state: Any, blackboard: dict, text: str, conversation_id: str, run_id: str
-    ) -> None:
-        """Persist each non-error blackboard entry as a durable per-task commit."""
-        if self._mongo is None or not getattr(self._mongo, "enabled", False):
-            return
+    ) -> list[str]:
+        """Persist each non-error blackboard entry as a durable per-task commit.
+
+        Returns the task ids actually committed (empty when Mongo is absent).
+        """
+        if self.mongo is None or not getattr(self.mongo, "enabled", False):
+            return []
         plan = getattr(state, "plan", None) or {}
         subtasks = plan.get("subtasks") if isinstance(plan, dict) else None
         by_id: dict[str, dict] = {}
@@ -118,12 +165,13 @@ class MemoryFacade:
             for st in subtasks:
                 if isinstance(st, dict) and st.get("id"):
                     by_id[st["id"]] = st
+        committed: list[str] = []
         try:
             for task_id, entry in (blackboard or {}).items():
                 if not isinstance(entry, dict) or "error" in entry:
                     continue
                 subtask = by_id.get(task_id, {})
-                await self._mongo.commit(
+                await self.mongo.commit(
                     run_id=run_id,
                     thread_id=conversation_id,
                     agent_id=subtask.get("agent_id", "") if isinstance(subtask, dict) else "",
@@ -133,18 +181,25 @@ class MemoryFacade:
                     task_id=task_id,
                     payload={"text": text},
                 )
+                committed.append(task_id)
         except Exception as exc:
             logger.warning("memory_commit_failed", error=str(exc))
+        return committed
 
     async def _extract_and_store_facts(
         self, state: Any, blackboard: dict, text: str, conversation_id: str, run_id: str
-    ) -> None:
-        """LLM-extract durable facts from a complete answer and upsert each."""
+    ) -> list[str]:
+        """LLM-extract durable facts from a complete answer and upsert each.
+
+        Returns the keys of the facts actually upserted (empty when gated off,
+        the LLM/Mongo are absent, or nothing extractable was found).
+        """
+        stored: list[str] = []
         # Gate: only extract from a real, complete answer.
         if getattr(state, "partial", False) or not (text or "").strip():
-            return
-        if self._llm is None or self._mongo is None or not getattr(self._mongo, "enabled", False):
-            return
+            return stored
+        if self._llm is None or self.mongo is None or not getattr(self.mongo, "enabled", False):
+            return stored
         try:
             from genie.application.state import Message
 
@@ -171,16 +226,18 @@ class MemoryFacade:
             parsed = _extract_json(resp.content) or {}
             facts = self._validate_facts(parsed.get("facts"))
             for f in facts:
-                await self._mongo.upsert_fact(
+                await self.mongo.upsert_fact(
                     scope=f["scope"],
                     key=f["key"],
                     value=f["value"],
                     thread_id=conversation_id,
                     run_id=run_id,
                 )
-            logger.info("memory_facts_extracted", count=len(facts))
+                stored.append(f["key"])
+            logger.info("memory_facts_extracted", count=len(stored))
         except Exception as exc:
             logger.warning("memory_facts_extract_failed", error=str(exc))
+        return stored
 
     # ── helpers ──────────────────────────────────────────────────────────────
     @staticmethod

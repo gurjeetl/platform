@@ -99,11 +99,13 @@ async def _trace_events(
     event with the final answer. On failure, an ``error`` event. Both the buffered
     (``/chat/trace``) and streaming (``/chat/trace/stream``) endpoints consume this.
     """
-    run_id = uuid.uuid4().hex
+    # Derive run_id from the state so the cleanup DEL below targets the SAME
+    # bb:{thread}:{run}:* keys the executor actually wrote (state.run_id).
+    state = _initial_state(message, thread_id)
+    run_id = state.run_id
     config = get_thread_config(f"{thread_id}:trace:{run_id}")
     cumulative: dict = {}
     t0 = time.perf_counter()
-    state = _initial_state(message, thread_id)
 
     yield {"type": "meta", "run_id": run_id, "user_input": message, "thread_id": thread_id}
 
@@ -138,14 +140,16 @@ async def _trace_events(
     redis_enabled = bool(getattr(redis, "enabled", False))
     wrote_blackboard = bool(cumulative.get("blackboard"))
     if wrote_blackboard and redis_enabled and hasattr(redis, "delete_run"):
+        removed = 0
         with contextlib.suppress(Exception):
-            await redis.delete_run(thread_id, run_id)
+            removed = await redis.delete_run(thread_id, run_id)
+        plural = "" if removed == 1 else "s"
         final_op = {
             "store": "redis",
             "op": "delete",
             "node": "final",
-            "detail": "blackboard cleared (1h TTL is the fallback)",
-            "code": f"DEL bb:{thread_id}:{run_id}:*",
+            "detail": f"blackboard cleared — {removed} key{plural} removed (1h TTL is the fallback)",
+            "code": f"DEL bb:{thread_id}:{run_id}:*  → {removed} key{plural}",
             "enabled": True,
         }
     else:

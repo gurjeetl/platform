@@ -9,12 +9,13 @@ Registry (see ``serve_agent`` at the bottom).
 import json
 
 from genie_agent_sdk import AgentMeta, BaseAgent, FieldSpec, serve_agent
+from prompts import OUTAGE_SYSTEM_PROMPT
 
 
 class OutageAgent(BaseAgent):
     """SDK agent that lists/describes grid outages via the MCP outage tools."""
 
-    system_prompt = "You are a grid-outage analyst summarizing outage reports."
+    system_prompt = OUTAGE_SYSTEM_PROMPT
     tool_names: list[str] = [
         "list_outage_ids",
         "get_outage_metadata",

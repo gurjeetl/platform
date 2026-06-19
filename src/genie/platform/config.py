@@ -114,6 +114,13 @@ class Settings(BaseSettings):
     )
     mlflow_experiment_name: str = "genie-platform"
 
+    # ── Application-provided prompt ───────────────────────────────────────────
+    # Each application runs its own platform instance and supplies its persona +
+    # domain context here (config YAML / GENIE_* env). Empty = use the platform's
+    # generic default (see genie.application.prompts.DEFAULT_SYSTEM_*).
+    app_system_prompt: str = ""
+    app_system_context: str = ""
+
     # Human-in-the-loop
     hitl_auto_approve: bool = True
     hitl_approval_timeout_seconds: float = 300.0
@@ -184,7 +191,7 @@ class Settings(BaseSettings):
         try:
             import yaml  # type: ignore[import]
 
-            with open(path) as fh:
+            with open(path, encoding="utf-8") as fh:
                 loaded = yaml.safe_load(fh)
                 if isinstance(loaded, dict):
                     yaml_data = loaded

@@ -6,12 +6,13 @@ Registry (see ``serve_agent`` at the bottom).
 """
 
 from genie_agent_sdk import AgentMeta, BaseAgent, FieldSpec, serve_agent
+from prompts import WEATHER_SYSTEM_PROMPT
 
 
 class WeatherAgent(BaseAgent):
     """SDK agent that reports a named city's weather via the ``get_weather`` tool."""
 
-    system_prompt = "You are a helpful weather reporter for a travel assistant."
+    system_prompt = WEATHER_SYSTEM_PROMPT
     tool_names: list[str] = ["get_weather"]
 
     def run(self, state: dict) -> dict:

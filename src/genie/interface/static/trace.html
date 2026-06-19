@@ -179,7 +179,7 @@
       planner:      { idx: 1, title: "Planner",      color: "#534AB7", pill: "PLAN",  description: "Splits the user prompt into a DAG of subtasks. The LLM gets a menu of registered agents and picks which ones to call, with what args, and in what dependency order." },
       orchestrator: { idx: 2, title: "Orchestrator", color: "#993C1D", pill: "WAVES", description: "Decomposes the DAG into dependency waves (Kahn's algorithm). Tasks with no unresolved dependencies fan out together; the decomposition is handed to the Executor — no agents run here." },
       executor:     { idx: 3, title: "Executor",     color: "#B06000", pill: "EXEC",  description: "Runs the waves in sequence; within each wave, its tasks run concurrently via asyncio.gather. A wave starts only after the previous one finishes, so a dependent task always sees its upstream results. Invokes each chosen agent over the A2A protocol (JSON-RPC message/send) at the endpoint discovered from the registry. Resolves any ${tN...} arg references from upstream results first. The agents in turn call their own tools through the MCP gateway. Writes every result — success or error — to the shared blackboard." },
-      gate:         { idx: 4, title: "Completion gate", color: "#0F6E56", pill: "GATE", description: "Inspects the blackboard: are all subtasks satisfied? Any errors? Decides whether to synthesize or re-plan." },
+      completion_gate: { idx: 4, title: "Completion gate", color: "#0F6E56", pill: "GATE", description: "Inspects the blackboard: are all subtasks satisfied? Any errors? Decides whether to synthesize or re-plan." },
       synthesizer:  { idx: 5, title: "Synthesizer", color: "#1a73e8", pill: "SYNTH", description: "Reads the blackboard and composes one user-facing answer. Single-task results pass straight through; multi-task results go through an LLM merge. Marks [PARTIAL] for any errored sections." },
       output_guard: { idx: "🛡", title: "Output guard", color: "#9333ea", pill: "GUARD-OUT", description: "Local LLM Guard scans the synthesized answer BEFORE it reaches the user. Blocking scanners (toxicity, banned topics) replace the answer with a safe refusal; the Sensitive scanner redacts any PII that leaked into the response." },
       final:        { idx: 6, title: "Final response", color: "#1A1612", pill: "DONE", description: "Answer delivered. If the executor wrote a shared blackboard, this run's Redis mirror is cleared here (DEL; the 1h TTL is the fallback for any stragglers) — a run that never reached the executor has nothing to clear. Session Memory (24h) and the permanent stores (agent_commits, Milvus embeddings) are untouched, ready for the next turn." },
@@ -813,7 +813,7 @@
             {phase === 'planner' && <PlannerStep update={step.update} agents={agents} />}
             {phase === 'orchestrator' && <OrchestratorStep update={step.update} plan={plan} />}
             {phase === 'executor' && <ExecutorStep update={step.update} plan={plan} />}
-            {phase === 'gate' && <GateStep update={step.update} />}
+            {phase === 'completion_gate' && <GateStep update={step.update} />}
             {phase === 'synthesizer' && <SynthesizerStep update={step.update} final={final} />}
             <DbOps ops={step.update.db_ops} node={phase} />
           </div>

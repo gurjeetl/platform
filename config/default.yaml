@@ -2,6 +2,16 @@ app_name: genie-platform
 #api_key: "pg-oati-abc123XYZ789456XYZ123abc456XYZ789abc123"
 mlflow_tracking_uri: "http://localhost:2001"
 mlflow_experiment_name: genie-platform
+
+# ── Application-provided prompt ─────────────────────────────────────────────────
+# This deployment IS the demo app: it supplies its own persona + domain context,
+# which the router/planner/synthesizer use in place of the platform's generic
+# default. Each application that runs its own platform instance sets these.
+app_system_prompt: "You are Genie, a helpful assistant for this demo deployment."
+app_system_context: >-
+  This deployment provides a weather agent (current conditions for a named city),
+  a grid-outage agent (list current outages or describe one by id), and a
+  documentation RAG agent. Use only the agents listed below.
 llm_provider: gpt_oss
 rag_mode: local
 log_level: INFO
@@ -23,7 +33,7 @@ agent_refresh_seconds: 30
 
 # ── Multi-store memory ──────────────────────────────────────────────────────────
 # "in_memory" (zero-dep) or "mongo" (durable: messages/facts/conversations + commits).
-memory_backend: in_memory
+memory_backend: mongo
 mongodb_uri: "mongodb://localhost:27017"
 mongodb_db: agent_memory
 # redis_url: "redis://localhost:6379/0"     # hot blackboard mirror (optional)

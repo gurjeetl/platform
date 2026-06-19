@@ -78,6 +78,8 @@ class GraphState(BaseModel):
     blackboard_snapshot: dict[str, Any] | None = None
     replan_count: int = 0
     replan_reason: str | None = None
+    # Completion-gate decision surfaced to the trace UI: "synthesize" | "replan".
+    next_action: str | None = None
     partial: bool = False
     # Optional structured view passed through to the chat response.
     view: dict[str, Any] | None = None

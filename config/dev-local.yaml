@@ -12,8 +12,23 @@ enable_hitl: false
 enable_guards: true
 enable_router: true       # ← toggle the router step here (false → planner-first)
 
+# Demo app persona + domain context (the platform default is domain-agnostic).
+app_system_prompt: "You are Genie, a helpful assistant for this demo deployment."
+app_system_context: >-
+  This deployment provides a weather agent (current conditions for a named city)
+  and a grid-outage agent (list current outages or describe one by id). Use only
+  the agents listed below.
+
 agent_mode: local
-memory_backend: in_memory
+# Durable multi-store memory: agent_commits + agent_facts land in MongoDB
+# (mongodb://localhost:27017 / agent_memory) and the final answer is embedded to
+# Milvus (long_term_memory) for semantic recall. Falls back to a no-op per store
+# whose driver/server is absent.
+memory_backend: mongo
+# Remote Milvus (Docker standalone on :19530). On Windows the local Milvus-Lite
+# file mode (milvus_db_path) is unavailable, so we point at a server instead.
+# Start it with:  docker compose -f docker/milvus-standalone.yml up -d
+milvus_uri: "http://localhost:19530"
 
 llm_services:
   models:

@@ -15,19 +15,17 @@ from typing import Any
 from genie.agents.registry import AgentRegistry
 from genie.application.dag import Plan, Subtask
 from genie.application.parsing import extract_json, normalize_agent_id, render_capability_menu
+from genie.application.prompts import (
+    DEFAULT_SYSTEM_CONTEXT,
+    DEFAULT_SYSTEM_PROMPT,
+    PLAN_SCHEMA_HINT,
+    PLANNER_PROMPT,
+)
 from genie.application.state import GraphState, Message
 from genie.observability.logging import get_logger
 from genie.tracking import node_span
 
 logger = get_logger(__name__)
-
-_PLAN_SCHEMA_HINT = (
-    "Respond ONLY with valid JSON in this exact shape:\n"
-    '{"subtasks":['
-    '{"id":"t1","agent_id":"<one of the agents>","args":{...},"depends_on":[],"sla_ms":10000}'
-    "]}\n"
-    "No extra text, no markdown fences, no explanation — just the JSON."
-)
 
 
 def _last_user_message(state: GraphState) -> str:
@@ -100,49 +98,14 @@ class PlannerNode:
                 f"snapshot: {json.dumps(snapshot, default=str)[:2000]}\n"
                 "Adjust the plan to recover from the errors above."
             )
-        return (
-            "You are a planning agent. Look at the user's request and split it into "
-            "one or more SUBTASKS, where each subtask is assigned to exactly one "
-            "registered agent below. Match user intent to agent capability + tags.\n\n"
-            "REGISTERED AGENTS:\n"
-            f"{menu}\n\n"
-            "How to match:\n"
-            "- Read each agent's capability description AND tags. Phrasing like 'show', "
-            "'list', 'tell me about', 'top N', 'forecast', 'report' are common synonyms; "
-            "match the agent that performs the underlying capability.\n"
-            "- Required inputs are marked with an asterisk (*). Optional inputs may be "
-            "omitted — when an agent works fine with empty args, pass {}.\n"
-            "- depends_on=[] means a subtask can run independently. Populate depends_on "
-            "ONLY when one task literally needs another task's output as input.\n"
-            "- CHAINING: to feed an earlier subtask's result into a later one, put a "
-            "reference in the later subtask's args AND add <id> to its depends_on. Use "
-            "${<id>.text} for the task's text output, or ${<id>.view.<path>} for a field "
-            "of its structured view. References are replaced at run time.\n"
-            "- Only return an empty subtasks list when truly NO registered agent can "
-            "address the request.\n\n"
-            "Examples:\n"
-            'User: "What\'s the weather in Paris?"\n'
-            '→ {"subtasks":[{"id":"t1","agent_id":"weather","args":{"location":"paris"},"depends_on":[]}]}\n\n'
-            'User: "Show me the top 5 outages."\n'
-            '→ {"subtasks":[{"id":"t1","agent_id":"outage","args":{},"depends_on":[]}]}\n\n'
-            'User: "Weather in Tokyo and the top outages."\n'
-            '→ {"subtasks":['
-            '{"id":"t1","agent_id":"weather","args":{"location":"tokyo"},"depends_on":[]},'
-            '{"id":"t2","agent_id":"outage","args":{},"depends_on":[]}'
-            "]}\n\n"
-            'User: "Top 5 outages, then full details of the first one." (chained)\n'
-            '→ {"subtasks":['
-            '{"id":"t1","agent_id":"outage","args":{},"depends_on":[]},'
-            '{"id":"t2","agent_id":"outage","args":{"outage_id":"${t1.view.items.0.id}"},"depends_on":["t1"]}'
-            "]}\n\n"
-            "Output rules:\n"
-            "- Use only agent_ids from the list above.\n"
-            "- Give each subtask a stable id like 't1','t2'.\n"
-            "- City names go in args as lowercase strings.\n"
-            f"{recall_block}"
-            f"{facts_block}"
-            f"{replan_block}\n\n"
-            f"{_PLAN_SCHEMA_HINT}"
+        return PLANNER_PROMPT.safe_substitute(
+            system_prompt=self._settings.app_system_prompt or DEFAULT_SYSTEM_PROMPT,
+            system_context=self._settings.app_system_context or DEFAULT_SYSTEM_CONTEXT,
+            capability_menu=menu,
+            recall_block=recall_block,
+            facts_block=facts_block,
+            replan_block=replan_block,
+            schema_hint=PLAN_SCHEMA_HINT,
         )
 
     def _build_plan(self, parsed: dict, agents: list) -> Plan:
@@ -175,6 +138,49 @@ class PlannerNode:
             )
         return Plan(subtasks=clean)
 
+    def _recall_db_ops(
+        self, recall: list[dict], facts: dict[str, str]
+    ) -> list[dict[str, Any]]:
+        """Trace ``db_ops`` for the memory the planner read to enrich its prompt.
+
+        One Milvus ``search`` (semantic recall) and one Mongo ``read`` (structured
+        facts), each reported with ``enabled`` so the card honestly shows
+        ``disabled (no-op)`` when that backend isn't configured.
+        """
+        vector = getattr(self._memory, "vector", None)
+        vector_enabled = bool(getattr(vector, "enabled", False))
+        mongo = getattr(self._memory, "mongo", None)
+        mongo_enabled = bool(getattr(mongo, "enabled", False))
+        n_recall, n_facts = len(recall), len(facts)
+        return [
+            {
+                "store": "milvus",
+                "op": "search",
+                "node": "planner",
+                "detail": (
+                    f"semantic recall — {n_recall} hit{'s' if n_recall != 1 else ''}"
+                    if vector_enabled
+                    else "semantic recall (Milvus disabled — no-op)"
+                ),
+                "code": f"milvus.search(long_term_memory, top_k=5, filter=thread)",
+                "enabled": vector_enabled,
+                "hits": [str(h.get("content", "")).strip()[:80] for h in recall],
+            },
+            {
+                "store": "mongodb",
+                "op": "read",
+                "node": "planner",
+                "detail": (
+                    f"facts recall — {n_facts} fact{'s' if n_facts != 1 else ''}"
+                    if mongo_enabled
+                    else "facts recall (Mongo disabled — no-op)"
+                ),
+                "code": "db.agent_facts.find({scope: {$in: [global, session]}})",
+                "enabled": mongo_enabled,
+                "hits": [f"{k}: {v}" for k, v in list(facts.items())[:10]],
+            },
+        ]
+
     async def _plan(self, state: GraphState) -> dict[str, Any]:
         """Recall memory, prompt the LLM, parse + validate, and return the plan dict."""
         user_msg = _last_user_message(state)
@@ -182,6 +188,7 @@ class PlannerNode:
 
         recall: list[dict] = []
         facts: dict[str, str] = {}
+        db_ops: list[dict[str, Any]] = []
         if self._memory is not None and user_msg:
             with contextlib.suppress(Exception):
                 recall = await self._memory.recall(state.conversation_id, user_msg)
@@ -189,12 +196,14 @@ class PlannerNode:
                 facts = await self._memory.query_facts(state.conversation_id)
             if len(facts) > self._max_facts:
                 facts = dict(list(facts.items())[: self._max_facts])
+            db_ops = self._recall_db_ops(recall, facts)
 
         if not agents:
             return {
                 "plan_error": "No agents registered; cannot build a plan.",
                 "plan": {"subtasks": []},
                 "blackboard": {},
+                "db_ops": db_ops,
             }
 
         prompt = self._build_system_prompt(state, agents, recall, facts)
@@ -207,7 +216,11 @@ class PlannerNode:
             raw = response.content
         except Exception as exc:  # noqa: BLE001
             logger.error("planner_llm_failed", error=str(exc))
-            return {"error": "Planner could not reach the model.", "plan": {"subtasks": []}}
+            return {
+                "error": "Planner could not reach the model.",
+                "plan": {"subtasks": []},
+                "db_ops": db_ops,
+            }
 
         parsed = extract_json(raw)
         if parsed is None:
@@ -215,12 +228,18 @@ class PlannerNode:
             return {
                 "error": "Planner could not parse a plan from the model.",
                 "plan": {"subtasks": []},
+                "db_ops": db_ops,
             }
 
         plan = self._build_plan(parsed, agents)
         if not plan.subtasks:
             logger.info("planner_empty_plan")
-            return {"plan": plan.model_dump(), "agent_versions": {}, "blackboard": {}}
+            return {
+                "plan": plan.model_dump(),
+                "agent_versions": {},
+                "blackboard": {},
+                "db_ops": db_ops,
+            }
 
         agent_versions = {t.id: t.agent_version for t in plan.subtasks}
         logger.info(
@@ -234,4 +253,5 @@ class PlannerNode:
             "blackboard": {},
             "blackboard_snapshot": None,
             "replan_reason": None,
+            "db_ops": db_ops,
         }

@@ -71,6 +71,7 @@ class CompletionGateNode:
                 meta["gate_action"] = "replan"
                 return {
                     "metadata": meta,
+                    "next_action": "replan",
                     "replan_count": replan_count + 1,
                     "replan_reason": f"missing tasks: {missing}; errored tasks: {error_keys}",
                     "blackboard_snapshot": dict(blackboard),
@@ -80,4 +81,4 @@ class CompletionGateNode:
             meta = dict(state.metadata)
             meta["gate_action"] = "synthesize"
             logger.info("gate_synthesize", partial=partial)
-            return {"metadata": meta, "partial": partial}
+            return {"metadata": meta, "next_action": "synthesize", "partial": partial}
