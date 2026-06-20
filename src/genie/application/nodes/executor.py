@@ -238,14 +238,15 @@ class ExecutorNode:
             return
 
         resolved_args = self._resolve_args(task.args or {}, bb)
+        # Identity fields ride on the typed AgentTask; context carries only the
+        # untyped routing extras (args/run_id/blackboard).
         context = {
-            "task_id": task.id,
-            "thread_id": state.conversation_id,
             "run_id": state.run_id,
             "args": resolved_args,
             "blackboard": bb.snapshot(),
         }
         agent_task = AgentTask(
+            task_id=task.id,
             agent_id=task.agent_id,
             conversation_id=state.conversation_id,
             correlation_id=get_correlation_id() or state.correlation_id,
@@ -258,7 +259,7 @@ class ExecutorNode:
         for attempt in range(2):  # 1 retry
             try:
                 result = await asyncio.wait_for(
-                    agent.execute(agent_task, context), timeout=timeout_s
+                    agent.execute(agent_task), timeout=timeout_s
                 )
                 if not result.success:
                     last_error = result.error or "agent reported failure"

@@ -39,6 +39,13 @@ redteam_results.json
 .mypy_cache/
 .ruff_cache/
 
+# ── AI assistant context (not published) ────────────────────────────────────
+CLAUDE.md
+codex.md
+AGENTS.md
+docs/
+.codesight/
+
 # ── IDE ───────────────────────────────────────────────────────────────────────
 .idea/
 .vscode/

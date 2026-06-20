@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Optional
 
-from genie.agents.base import AgentInfo, BaseAgent
+from genie.agents.base import AgentInfo, AgentProtocol
 from genie.platform.errors import ErrorCode, GenieError
 from genie.observability.logging import get_logger
 
@@ -27,7 +27,7 @@ class AgentRegistry:
 
     def __init__(self) -> None:
         """Start empty; the health cache is populated as agents register."""
-        self._agents: dict[str, BaseAgent] = {}
+        self._agents: dict[str, AgentProtocol] = {}
         # Separate health cache — owned by the registry, not by agents.
         # Agents must NOT set health themselves; the registry polls and writes here.
         self._health: dict[str, str] = {}
@@ -36,7 +36,7 @@ class AgentRegistry:
 
     # ── Registration ──────────────────────────────────────────────────────────
 
-    def register(self, agent: BaseAgent) -> None:
+    def register(self, agent: AgentProtocol) -> None:
         """Index an agent by id; reject duplicates and warn on capability collisions."""
         # Gap 5: reject duplicate agent IDs — silent overwrite hides bugs
         if agent.agent_id in self._agents:
@@ -73,18 +73,18 @@ class AgentRegistry:
 
     # ── Lookup ────────────────────────────────────────────────────────────────
 
-    def get(self, agent_id: str) -> BaseAgent | None:
+    def get(self, agent_id: str) -> AgentProtocol | None:
         """Return the agent for ``agent_id``, or None if not registered."""
         return self._agents.get(agent_id)
 
-    def require(self, agent_id: str) -> BaseAgent:
+    def require(self, agent_id: str) -> AgentProtocol:
         """Like ``get`` but raise NOT_FOUND when the agent is missing."""
         agent = self.get(agent_id)
         if agent is None:
             raise GenieError(ErrorCode.NOT_FOUND, f"Agent '{agent_id}' not found")
         return agent
 
-    def find_by_capability(self, capability: str) -> list[BaseAgent]:
+    def find_by_capability(self, capability: str) -> list[AgentProtocol]:
         """Return enabled, non-unhealthy agents that declare the given capability.
 
         Gap 1: an agent whose health_check recently returned 'unhealthy' is excluded
@@ -130,7 +130,7 @@ class AgentRegistry:
 
     # ── Health check loop ─────────────────────────────────────────────────────
 
-    async def _check_one(self, agent: BaseAgent) -> str:
+    async def _check_one(self, agent: AgentProtocol) -> str:
         """Call agent.health_check(); default to 'healthy' if not implemented."""
         try:
             if hasattr(agent, "health_check") and callable(getattr(agent, "health_check")):

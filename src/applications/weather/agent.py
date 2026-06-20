@@ -7,8 +7,6 @@ version would call a weather API or an MCP tool via the injected ``tool_gateway`
 
 from __future__ import annotations
 
-from typing import Any
-
 from genie.agents.base import AgentInfo, AgentResult, AgentTask, CapabilitySpec
 
 _WEATHER = {
@@ -67,7 +65,7 @@ class WeatherAgent:
             sla_ms=4000,
         )
 
-    async def execute(self, task: AgentTask, context: dict[str, Any]) -> AgentResult:
+    async def execute(self, task: AgentTask) -> AgentResult:
         """Look up the report for ``args.location`` and return it as the task result."""
         loc = str((task.context or {}).get("args", {}).get("location", "")).lower().strip()
         report = _WEATHER.get(loc, f"No weather data available for '{loc or 'that location'}'.")

@@ -1,0 +1,35 @@
+# Project Context
+
+This is a python project using fastapi.
+It is a monorepo with workspaces: genie-agent-sdk (packages\genie-agent-sdk), rag_service (services\rag_service), registry (services\registry).
+
+The API has 25 routes. See .codesight/routes.md for the full route map with methods, paths, and tags.
+Middleware includes: custom, auth.
+
+High-impact files (most imported, changes here affect many other files):
+- /api.py (imported by 1 files)
+- /ingestion.py (imported by 1 files)
+- /retrieval.py (imported by 1 files)
+- /completion_gate.py (imported by 1 files)
+- /executor.py (imported by 1 files)
+- /orchestrator.py (imported by 1 files)
+- /planner.py (imported by 1 files)
+- /router.py (imported by 1 files)
+
+Required environment variables (no defaults):
+- AGENT_ADVERTISE_HOST (packages\genie-agent-sdk\.env.example)
+- AGENT_ADVERTISE_PORT (packages\genie-agent-sdk\.env.example)
+- AGENT_INVOKE_TOKEN (packages\genie-agent-sdk\.env.example)
+- GENIE_API_KEY (.env.example)
+- GENIE_CONFIG_FILE (src\genie\platform\config.py)
+- LOG_LEVEL (services\registry\src\registry_service\service.py)
+- MCP_AUTH_TOKEN (packages\genie-agent-sdk\.env.example)
+- MILVUS_TOKEN (src\genie\memory\adapters\vector.py)
+- MILVUS_URI (src\genie\memory\adapters\vector.py)
+- OPENAI_API_KEY (services\agents\.env.example)
+- OPENAI_BASE_URL (packages\genie-agent-sdk\.env.example)
+- OUTAGE_DATA_PATH (services\agents\mcp_weather_server.py)
+- REGISTRY_AUTH_TOKEN (services\registry\.env.example)
+
+Read .codesight/wiki/index.md for orientation (WHERE things live). Then read actual source files before implementing. Wiki articles are navigation aids, not implementation guides.
+Read .codesight/CODESIGHT.md for the complete AI context map including all routes, schema, components, libraries, config, middleware, and dependency graph.

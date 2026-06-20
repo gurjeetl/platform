@@ -8,9 +8,9 @@ directly to keep the application layer free of implementation coupling.
 from genie.agents.base import (
     AgentCapability,
     AgentInfo,
+    AgentProtocol,
     AgentResult,
     AgentTask,
-    BaseAgent,
     CapabilitySpec,
 )
 from genie.agents.registry import AgentRegistry
@@ -20,7 +20,7 @@ __all__ = [
     "AgentTask",
     "AgentResult",
     "AgentInfo",
-    "BaseAgent",
+    "AgentProtocol",
     "AgentRegistry",
     "CapabilitySpec",
 ]

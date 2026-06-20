@@ -141,12 +141,16 @@ class AgentInfo(BaseModel):
 
 
 @runtime_checkable
-class BaseAgent(Protocol):
+class AgentProtocol(Protocol):
     """Protocol every agent must satisfy.
 
     Use structural typing — no inheritance required.  New methods ``enable()``,
     ``disable()``, and ``health_check()`` are part of the contract so the registry
     can manage lifecycle without accessing private attributes.
+
+    Named ``AgentProtocol`` (not ``BaseAgent``) to avoid colliding with the SDK's
+    concrete ``genie_agent_sdk.BaseAgent`` — this is the *caller-side interface*
+    the platform expects, not a base class agents subclass.
     """
 
     @property
@@ -167,7 +171,11 @@ class BaseAgent(Protocol):
     @property
     def enabled(self) -> bool: ...
 
-    async def execute(self, task: AgentTask, context: dict[str, Any]) -> AgentResult: ...
+    async def execute(self, task: AgentTask) -> AgentResult:
+        """Run the task and return a result. Routing extras (``args``, ``run_id``,
+        ``blackboard``) ride on ``task.context``; identity fields (``task_id``,
+        ``conversation_id``, ``correlation_id``) are read from the typed ``task``."""
+        ...
 
     def get_info(self) -> AgentInfo: ...
 

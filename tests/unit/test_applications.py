@@ -37,7 +37,7 @@ def _task(agent_id: str, args: dict) -> AgentTask:
 @pytest.mark.asyncio
 async def test_weather_execute():
     agent = next(a for a in _build_all() if a.agent_id == "weather")
-    res = await agent.execute(_task("weather", {"location": "paris"}), {})
+    res = await agent.execute(_task("weather", {"location": "paris"}))
     assert res.success and "Paris" in res.output
     assert res.data["view"]["type"] == "weather"
 
@@ -45,12 +45,12 @@ async def test_weather_execute():
 @pytest.mark.asyncio
 async def test_outage_list_and_detail():
     agent = next(a for a in _build_all() if a.agent_id == "outage")
-    listed = await agent.execute(_task("outage", {}), {})
+    listed = await agent.execute(_task("outage", {}))
     assert listed.data["view"]["type"] == "outage_list"
     assert len(listed.data["view"]["items"]) == 5  # default top-5
-    five = await agent.execute(_task("outage", {"limit": 5}), {})
+    five = await agent.execute(_task("outage", {"limit": 5}))
     assert len(five.data["view"]["items"]) == 5
-    detail = await agent.execute(_task("outage", {"outage_id": 18645677}), {})
+    detail = await agent.execute(_task("outage", {"outage_id": 18645677}))
     assert detail.data["view"]["type"] == "outage_detail"
     assert detail.data["view"]["outage_id"] == 18645677
 
@@ -58,6 +58,6 @@ async def test_outage_list_and_detail():
 @pytest.mark.asyncio
 async def test_rag_execute_returns_citation():
     agent = next(a for a in _build_all() if a.agent_id == "rag")
-    res = await agent.execute(_task("rag", {"query": "what is the a2a protocol"}), {})
+    res = await agent.execute(_task("rag", {"query": "what is the a2a protocol"}))
     assert res.success and "[1]" in res.output
     assert res.data["view"]["sources"]

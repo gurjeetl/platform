@@ -1155,12 +1155,24 @@ wheels = [
 ]
 
 [[package]]
+name = "genie-agent-contracts"
+version = "0.1.0"
+source = { editable = "packages/genie-agent-contracts" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic", specifier = ">=2.7" }]
+
+[[package]]
 name = "genie-platform"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },
     { name = "fastapi" },
+    { name = "genie-agent-contracts" },
     { name = "genie-rag-contracts" },
     { name = "httpx" },
     { name = "langchain-core" },
@@ -1223,6 +1235,7 @@ requires-dist = [
     { name = "anyio", specifier = ">=4.3" },
     { name = "fakeredis", marker = "extra == 'dev'", specifier = ">=2.20" },
     { name = "fastapi", specifier = ">=0.111" },
+    { name = "genie-agent-contracts", editable = "packages/genie-agent-contracts" },
     { name = "genie-rag-contracts", editable = "packages/genie-rag-contracts" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },

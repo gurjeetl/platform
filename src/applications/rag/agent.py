@@ -8,8 +8,6 @@ dependency-free keyword-overlap ranker, returning a grounded answer with a cited
 
 from __future__ import annotations
 
-from typing import Any
-
 from genie.agents.base import AgentInfo, AgentResult, AgentTask, CapabilitySpec
 
 # Small bundled doc set describing the platform.
@@ -115,7 +113,7 @@ class RagAgent:
             sla_ms=8000,
         )
 
-    async def execute(self, task: AgentTask, context: dict[str, Any]) -> AgentResult:
+    async def execute(self, task: AgentTask) -> AgentResult:
         """Rank docs for ``args.query`` and return a citation-tagged answer + view."""
         query = str((task.context or {}).get("args", {}).get("query", "")).strip()
         chunks = _rank(query)

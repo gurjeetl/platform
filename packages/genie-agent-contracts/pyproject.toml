@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "genie-agent-contracts"
+version = "0.1.0"
+description = "Shared agent metadata contracts for the genie agent/registry boundary"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.7",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/genie_agent_contracts"]

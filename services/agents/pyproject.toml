@@ -9,12 +9,14 @@ description = "Example distributed A2A agents + MCP tool server for the Genie pl
 requires-python = ">=3.11"
 dependencies = [
     "genie-agent-sdk",
+    "genie-agent-contracts",
     "mcp",
     "langchain-core",
 ]
 
 [tool.uv.sources]
 genie-agent-sdk = { path = "../../packages/genie-agent-sdk", editable = true }
+genie-agent-contracts = { path = "../../packages/genie-agent-contracts", editable = true }
 
 [tool.hatch.build.targets.wheel]
 # Runnable scripts at the package root (no nested package dir).

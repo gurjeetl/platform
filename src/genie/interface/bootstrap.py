@@ -5,7 +5,7 @@ Agents are injected by the caller (see src/app.py) via the ``agent_providers``
 parameter so that adding a new agent never requires touching this file.
 
 Each provider is a callable with signature:
-    (*, tool_gateway: ConcreteToolGateway, settings: Settings) -> BaseAgent
+    (*, tool_gateway: ConcreteToolGateway, settings: Settings) -> AgentProtocol
 
 The provider is responsible for registering any tools its agent needs and
 returning the fully constructed agent instance.
@@ -183,7 +183,7 @@ def _build_dependencies(
 
     ``agent_providers`` is a list of callables supplied by the application layer.
     Each is invoked with keyword arguments ``tool_gateway`` and ``settings`` and
-    must return a ``BaseAgent`` instance.  Providers are also responsible for
+    must return an ``AgentProtocol`` instance.  Providers are also responsible for
     registering any tools their agent depends on.
     """
     # LLM

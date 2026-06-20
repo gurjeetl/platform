@@ -1,6 +1,6 @@
 """Agent providers — the injection seam wired into the platform from ``src/app.py``.
 
-Each provider is ``(*, tool_gateway, settings) -> BaseAgent``. Add a new in-process
+Each provider is ``(*, tool_gateway, settings) -> AgentProtocol``. Add a new in-process
 agent by creating ``applications/<name>/agent.py`` and appending a provider here.
 """
 

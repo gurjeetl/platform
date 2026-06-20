@@ -76,7 +76,7 @@ async def unregister_agent(agent_id: str, request: Request) -> JSONResponse:
 
 
 class _ExternalAgentProxy:
-    """Lightweight BaseAgent implementation backed by an AgentInfo card.
+    """Lightweight AgentProtocol implementation backed by an AgentInfo card.
 
     Gap 9: allows external or test agents to be registered at runtime by
     posting their card to ``POST /api/v1/agents/register``.  The ``execute``
@@ -135,7 +135,7 @@ class _ExternalAgentProxy:
         """Return the card with the current enabled state applied."""
         return self._info.model_copy(update={"enabled": self._enabled})
 
-    async def execute(self, task: AgentTask, context: dict) -> AgentResult:
+    async def execute(self, task: AgentTask) -> AgentResult:
         """Not implemented — a dynamically-registered card has no local executor."""
         raise NotImplementedError(
             f"Agent '{self.agent_id}' was dynamically registered from an AgentInfo card "

@@ -1,7 +1,7 @@
 """Shared test fixtures for the distributed-agent platform.
 
 Agents are remote services in production; in tests we use an in-process ``FakeAgent``
-(satisfying the ``BaseAgent`` protocol) and a ``StubLLM`` returning canned content so
+(satisfying the ``AgentProtocol``) and a ``StubLLM`` returning canned content so
 the pipeline can be exercised deterministically without a network or a real model.
 """
 
@@ -51,7 +51,7 @@ class StubLLM:
 
 
 class FakeAgent:
-    """Minimal in-process agent satisfying ``genie.agents.base.BaseAgent``."""
+    """Minimal in-process agent satisfying ``genie.agents.base.AgentProtocol``."""
 
     def __init__(
         self,
@@ -99,9 +99,9 @@ class FakeAgent:
     def enabled(self) -> bool:
         return self._enabled
 
-    async def execute(self, task: AgentTask, context: dict[str, Any]) -> AgentResult:
+    async def execute(self, task: AgentTask) -> AgentResult:
         if self._handler is not None:
-            return self._handler(task, context)
+            return self._handler(task, task.context or {})
         args = (task.context or {}).get("args", {})
         return AgentResult(
             task_id=task.task_id,

@@ -51,7 +51,7 @@ async def test_execute_dispatches_a2a_and_maps_reply(httpx_mock):
         instruction="weather",
         context={"args": {"location": "paris"}, "task_id": "t1"},
     )
-    result = await agent.execute(task, {})
+    result = await agent.execute(task)
     assert result.success is True
     assert result.output == "Sunny, 20C"
     assert result.data["view"] == {"temp_c": 20}
@@ -70,7 +70,7 @@ async def test_execute_maps_jsonrpc_error_to_failure(httpx_mock):
         instruction="x",
         context={"args": {}, "task_id": "t1"},
     )
-    result = await agent.execute(task, {})
+    result = await agent.execute(task)
     assert result.success is False
     assert "boom" in result.error
 
@@ -84,5 +84,5 @@ async def test_execute_missing_endpoint_fails_gracefully():
         instruction="x",
         context={"args": {}, "task_id": "t1"},
     )
-    result = await agent.execute(task, {})
+    result = await agent.execute(task)
     assert result.success is False

@@ -24,6 +24,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "swagger-ui-bundle>=1.1.0",
     "genie-rag-contracts",
+    "genie-agent-contracts",
 ]
 
 [project.optional-dependencies]
@@ -74,6 +75,7 @@ managed = true
 
 [tool.uv.sources]
 genie-rag-contracts = { path = "packages/genie-rag-contracts", editable = true }
+genie-agent-contracts = { path = "packages/genie-agent-contracts", editable = true }
 
 [tool.ruff]
 line-length = 100

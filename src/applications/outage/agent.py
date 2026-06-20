@@ -8,8 +8,6 @@ version would query an operational DB via MCP / the tool gateway.
 
 from __future__ import annotations
 
-from typing import Any
-
 from genie.agents.base import AgentInfo, AgentResult, AgentTask, CapabilitySpec
 
 # Reference dataset (ordered by significance/recency). A production agent would
@@ -154,7 +152,7 @@ class OutageAgent:
             sla_ms=6000,
         )
 
-    async def execute(self, task: AgentTask, context: dict[str, Any]) -> AgentResult:
+    async def execute(self, task: AgentTask) -> AgentResult:
         """Detail path if ``args.outage_id`` is given, else the top-N list path."""
         args = (task.context or {}).get("args", {})
         oid = args.get("outage_id")
